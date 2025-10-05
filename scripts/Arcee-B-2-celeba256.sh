@@ -1,0 +1,23 @@
+torchrun --standalone --nproc_per_node=1 ../Arcee/train.py --exp Arcee-B-2-256-celeba --datadir ../data_prep/celeba/ --dataset celeba_256 --eval-refdir ../data_prep/celeba/real_samples \
+  --image-size 256 \
+  --num-classes 1 \
+  --block-type normal \
+  --model Arcee-B/2 \
+  --scan-type Arcee_1 \
+  --ssm-dstate 256 \
+  --train-steps 60000 \
+  --eval-every 10000 \
+  --plot-every 100 \
+  --ckpt-every 10000 \
+  --log-every 5 \
+  --global-batch-size 8 \
+  --sample-bs 8 \
+  --eval-bs 8 \
+  --lr 3e-4 \
+  --learnable-pe \
+  --path-type GVP \
+  --eval-nsamples 10000 \
+  --rms-norm \
+  --fused-add-norm \
+  --drop-path 0.0 \
+  --save-content-every 5000

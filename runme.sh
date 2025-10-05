@@ -1,0 +1,14 @@
+python Arcee/instance.py \
+    --exp instantiation \
+    --datadir . \
+      --image-size 256 \
+  --num-classes 1 \
+  --block-type normal \
+  --model Arcee-B/2 \
+  --scan-type Arcee_8 \
+  --ssm-dstate 256 \
+  --global-batch-size 8 \
+  --learnable-pe \
+  --rms-norm \
+  --fused-add-norm \
+  --drop-path 0.0

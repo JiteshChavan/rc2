@@ -1,0 +1,22 @@
+torchrun --standalone --nproc_per_node=1 ../Arcee/dummytrain.py --exp zigma-448 --datadir ../data/celeba256/lmdb_new --dataset celeba_256 --eval-refdir ../data/celeba256/real_samples \
+  --image-size 256 \
+  --num-classes 1 \
+  --block-type normal \
+  --model Arcee-XS/2 \
+  --scan-type Arcee_1 \
+  --ssm-dstate 256 \
+  --train-steps 4000 \
+  --eval-every 2 \
+  --plot-every 100 \
+  --ckpt-every 10000 \
+  --log-every 3 \
+  --global-batch-size 8 \
+  --sample-bs 8 \
+  --eval-bs 4 \
+  --lr 1e-4 \
+  --learnable-pe \
+  --path-type GVP \
+  --eval-nsamples 1 \
+  --rms-norm \
+  --fused-add-norm \
+  --drop-path 0.0
