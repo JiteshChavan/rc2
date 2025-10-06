@@ -459,6 +459,7 @@ class ArceeMambaInnerFn(torch.autograd.Function):
                 li = getattr(ctx, "layer_idx", -1)
                 # only log some layers (e.g., 0 and last)
                 wandb.log({f"dh0_norm/l{li}": dh0.detach().norm().item()}, commit=False)
+                print (f"dh0 norm!!! : {dh0.norm()}")
         except Exception:
             pass
 
