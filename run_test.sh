@@ -1,0 +1,1 @@
+compute-sanitizer --tool memcheck --error-exitcode 1 --show-backtrace yes python test.py

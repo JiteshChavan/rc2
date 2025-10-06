@@ -58,7 +58,8 @@ struct Selective_Scan_bwd_kernel_traits {
     using BlockStoreT = cub::BlockStore<input_t, kNThreads, kNItems, cub::BLOCK_STORE_WARP_TRANSPOSE>;
     using BlockStoreVecT = cub::BlockStore<vec_t, kNThreads, kNLoads, cub::BLOCK_STORE_WARP_TRANSPOSE>;
     // using BlockScanT = cub::BlockScan<scan_t, kNThreads, cub::BLOCK_SCAN_RAKING_MEMOIZE>;
-    using BlockScanT = cub::BlockScan<scan_t, kNThreads, cub::BLOCK_SCAN_RAKING>;
+    // using BlockScanT = cub::BlockScan<scan_t, kNThreads, cub::BLOCK_SCAN_RAKING>;
+    using BlockScanT = cub::BlockScan<scan_t, kNThreads, cub::BLOCK_SCAN_WARP_SCANS>;
     // using BlockScanT = cub::BlockScan<scan_t, kNThreads, cub::BLOCK_SCAN_WARP_SCANS>;
     using BlockReverseScanT = BlockReverseScan<scan_t, kNThreads>;
     using BlockReduceT = cub::BlockReduce<scan_t, kNThreads>;
@@ -92,7 +93,7 @@ void selective_scan_bwd_kernel(SSMParamsBwd params) {
     using scan_t = typename Ktraits::scan_t;
 
     // Shared memory.
-    extern __shared__ char smem_[];
+    extern __shared__ __align__(16) char smem_[];
     // -----------------------------------------------------------------------------------------------------------------------------
     // Surgery: introduce deterministic block-wide seed slots
     //  - block_prefix_seed : forward-direction seed (mirrors fwd kernel h0 injection)
@@ -100,8 +101,8 @@ void selective_scan_bwd_kernel(SSMParamsBwd params) {
     // Only thread 0 writes these; all threads read after __syncthreads().
     // This ensures a single, unambiguous seed per block scan (no warp-level over-injection).
     // -----------------------------------------------------------------------------------------------------------------------------
-    __shared__ scan_t block_prefix_seed;
-    __shared__ scan_t block_postfix_seed;
+    __shared__ __align__(16) scan_t block_prefix_seed;
+    __shared__ __align__(16) scan_t block_postfix_seed;
     const bool has_h0 = params.h0_ptr != nullptr; // from SSMParamsBase
     // base pointers for optional upstream last_state gradients depositing gradients wrt h0 seed
     // types: weight_t for real, complex_t for complex builds
@@ -387,8 +388,9 @@ void selective_scan_bwd_kernel(SSMParamsBwd params) {
                     // changed
                     const float dx = thread_reverse_data[i].y;   // = dL/dx_t
                     // multiply by B exactly once for the input-injection path
-                    const float ddelta_u = (!kIsVariableB) ? dx * B_val
-                                                           : dx * B_vals[i];
+                    //const float ddelta_u = (!kIsVariableB) ? dx * B_val
+                    //                                       : dx * B_vals[i];
+                    const float ddelta_u = (!kIsVariableB) ? dx          : dx * B_vals[i];
 
                     du_vals[i] += ddelta_u * delta_vals[i];
                     const float a = thread_data[i].y - (!kIsVariableB ? delta_vals[i] * float(u_vals[i]) : delta_vals[i] * float(u_vals[i]) * B_vals[i]);

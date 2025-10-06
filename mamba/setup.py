@@ -39,6 +39,7 @@ BASE_WHEEL_URL = "https://github.com/state-spaces/mamba/releases/download/{tag_n
 # FORCE_BUILD: Force a fresh build locally, instead of attempting to find prebuilt wheels
 # SKIP_CUDA_BUILD: Intended to allow CI to use a simple `python setup.py sdist` run to copy over raw files, without any cuda compilation
 FORCE_BUILD = os.getenv("MAMBA_FORCE_BUILD", "FALSE") == "TRUE"
+DEBUG_BUILD = os.getenv("MAMBA_DEBUG", "0") in ("1","True","true")
 SKIP_CUDA_BUILD = os.getenv("MAMBA_SKIP_CUDA_BUILD", "FALSE") == "TRUE"
 # For CI, we want the option to build with C++11 ABI since the nvcr images use C++11 ABI
 FORCE_CXX11_ABI = os.getenv("MAMBA_FORCE_CXX11_ABI", "FALSE") == "TRUE"
@@ -123,7 +124,7 @@ def check_if_cuda_home_none(global_option: str) -> None:
 
 
 def append_nvcc_threads(nvcc_extra_args):
-    return nvcc_extra_args + ["--threads", "4"]
+    return nvcc_extra_args # + ["--threads", "4"]
 
 
 cmdclass = {}
@@ -137,14 +138,16 @@ if not SKIP_CUDA_BUILD:
     TORCH_MAJOR = int(torch.__version__.split(".")[0])
     TORCH_MINOR = int(torch.__version__.split(".")[1])
 
-    cc_flag = []
+   
+    if FORCE_CXX11_ABI:
+        torch._C._GLIBCXX_USE_CXX11_ABI = True
 
+    cc_flag = []
     if HIP_BUILD:
         check_if_hip_home_none(PACKAGE_NAME)
-
+        # Preserve ROCm version checks here (moved from the earlier block)
         rocm_home = os.getenv("ROCM_PATH")
         _, hip_version = get_hip_version(rocm_home)
-
         if HIP_HOME is not None:
             if hip_version < Version("6.0"):
                 raise RuntimeError(
@@ -157,95 +160,48 @@ if not SKIP_CUDA_BUILD:
                     "Refer to the README.md for detailed instructions.",
                     UserWarning
                 )
-
         cc_flag.append("-DBUILD_PYTHON_PACKAGE")
-
     else:
         check_if_cuda_home_none(PACKAGE_NAME)
-        # Check, if CUDA11 is installed for compute capability 8.0
-
+        bare_metal_version = None
         if CUDA_HOME is not None:
             _, bare_metal_version = get_cuda_bare_metal_version(CUDA_HOME)
             if bare_metal_version < Version("11.6"):
-                raise RuntimeError(
-                    f"{PACKAGE_NAME} is only supported on CUDA 11.6 and above.  "
-                    "Note: make sure nvcc has a supported version by running nvcc -V."
-                )
+                raise RuntimeError(f"{PACKAGE_NAME} needs CUDA ≥11.6")
+        cc_flag.append("-gencode"); cc_flag.append("arch=compute_89,code=sm_89")
+        cc_flag.append("-gencode"); cc_flag.append("arch=compute_80,code=sm_80")
+        if bare_metal_version is not None and bare_metal_version >= Version("11.8"):
+            cc_flag.append("-gencode"); cc_flag.append("arch=compute_90,code=sm_90")
+            cc_flag.append("-gencode"); cc_flag.append("arch=compute_90,code=compute_90")
 
-        if bare_metal_version <= Version("12.9"):
-            cc_flag.append("-gencode")
-            cc_flag.append("arch=compute_53,code=sm_53")
-            cc_flag.append("-gencode")
-            cc_flag.append("arch=compute_62,code=sm_62")
-            cc_flag.append("-gencode")
-            cc_flag.append("arch=compute_70,code=sm_70")
-            cc_flag.append("-gencode")
-            cc_flag.append("arch=compute_72,code=sm_72")
-        cc_flag.append("-gencode")
-        cc_flag.append("arch=compute_75,code=sm_75")
-        cc_flag.append("-gencode")
-        cc_flag.append("arch=compute_80,code=sm_80")
-        cc_flag.append("-gencode")
-        cc_flag.append("arch=compute_87,code=sm_87")
-        if bare_metal_version >= Version("11.8"):
-            cc_flag.append("-gencode")
-            cc_flag.append("arch=compute_90,code=sm_90")
-        if bare_metal_version >= Version("12.8"):
-            cc_flag.append("-gencode")
-            cc_flag.append("arch=compute_100,code=sm_100")
-            cc_flag.append("-gencode")
-            cc_flag.append("arch=compute_120,code=sm_120")
-        if bare_metal_version >= Version("13.0"):
-            cc_flag.append("-gencode")
-            cc_flag.append("arch=compute_103,code=sm_103")
-            cc_flag.append("-gencode")
-            cc_flag.append("arch=compute_110,code=sm_110")
-            cc_flag.append("-gencode")
-            cc_flag.append("arch=compute_121,code=sm_121")
+    # Common base flags (debug vs release)
+    base_nvcc = [
+        "-std=c++17",
+        "-U__CUDA_NO_HALF_OPERATORS__",
+        "-U__CUDA_NO_HALF_CONVERSIONS__",
+        "-U__CUDA_NO_BFLOAT16_OPERATORS__",
+        "-U__CUDA_NO_BFLOAT16_CONVERSIONS__",
+        "-U__CUDA_NO_BFLOAT162_OPERATORS__",
+        "-U__CUDA_NO_BFLOAT162_CONVERSIONS__",
+        "--expt-relaxed-constexpr",
+        "--expt-extended-lambda",
+        "--ptxas-options=-v",
+        "-lineinfo",
+    ]
+    base_cxx = ["-std=c++17"]
 
-
-    # HACK: The compiler flag -D_GLIBCXX_USE_CXX11_ABI is set to be the same as
-    # torch._C._GLIBCXX_USE_CXX11_ABI
-    # https://github.com/pytorch/pytorch/blob/8472c24e3b5b60150096486616d98b7bea01500b/torch/utils/cpp_extension.py#L920
-    if FORCE_CXX11_ABI:
-        torch._C._GLIBCXX_USE_CXX11_ABI = True
-
-    if HIP_BUILD:
-
-        extra_compile_args = {
-            "cxx": ["-O3", "-std=c++17"],
-            "nvcc": [
-                "-O3",
-                "-std=c++17",
-                f"--offload-arch={os.getenv('HIP_ARCHITECTURES', 'native')}",
-                "-U__CUDA_NO_HALF_OPERATORS__",
-                "-U__CUDA_NO_HALF_CONVERSIONS__",
-                "-fgpu-flush-denormals-to-zero",
-            ]
-            + cc_flag,
-        }
+    if DEBUG_BUILD:
+        # device debug + host symbols
+        base_nvcc += ["-G", "-Xptxas", "-O0"]
+        base_cxx  += ["-O0", "-g"]
     else:
-        extra_compile_args = {
-            "cxx": ["-O3", "-std=c++17"],
-            "nvcc": append_nvcc_threads(
-                [
-                    "-O3",
-                    "-std=c++17",
-                    "-U__CUDA_NO_HALF_OPERATORS__",
-                    "-U__CUDA_NO_HALF_CONVERSIONS__",
-                    "-U__CUDA_NO_BFLOAT16_OPERATORS__",
-                    "-U__CUDA_NO_BFLOAT16_CONVERSIONS__",
-                    "-U__CUDA_NO_BFLOAT162_OPERATORS__",
-                    "-U__CUDA_NO_BFLOAT162_CONVERSIONS__",
-                    "--expt-relaxed-constexpr",
-                    "--expt-extended-lambda",
-                    "--use_fast_math",
-                    "--ptxas-options=-v",
-                    "-lineinfo",
-                ]
-                + cc_flag
-            ),
-        }
+        base_nvcc = ["-O3"] + base_nvcc + ["--use_fast_math"]
+        base_cxx  = ["-O3"] + base_cxx
+
+    extra_compile_args = {
+        "cxx": base_cxx,
+        "nvcc": append_nvcc_threads(base_nvcc + cc_flag),
+    }
 
     ext_modules.append(
         CUDAExtension(
@@ -302,10 +258,7 @@ def get_wheel_url():
     python_version = f"cp{sys.version_info.major}{sys.version_info.minor}"
     platform_name = get_platform()
     mamba_ssm_version = get_package_version()
-    if os.environ.get("NVIDIA_PRODUCT_NAME", "") == "PyTorch":
-        torch_version = str(os.environ.get("NVIDIA_PYTORCH_VERSION"))
-    else:
-        torch_version = f"{torch_version_raw.major}.{torch_version_raw.minor}"
+    torch_version = f"{torch_version_raw.major}.{torch_version_raw.minor}"
     cxx11_abi = str(torch._C._GLIBCXX_USE_CXX11_ABI).upper()
 
     # Determine wheel URL based on CUDA version, torch version, python version and OS
