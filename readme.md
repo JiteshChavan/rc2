@@ -1,5 +1,5 @@
 ### Create env.
-- install cuda toolkit 12.8
+- install cuda toolkit 12.8 ( try conda install -c "nvidia/label/cuda-12.8.0" cuda-toolkit)
 - pip install -r req.txt
 - remove the default torch installation as:
 - pip uninstall -y torch torchvision torchaudio torchtext xformers triton torchtriton pytorch-triton

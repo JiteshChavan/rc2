@@ -5,7 +5,7 @@ python Arcee/instance.py \
   --num-classes 1 \
   --block-type normal \
   --model Arcee-B/2 \
-  --scan-type Arcee_8 \
+  --scan-type Arcee_1 \
   --ssm-dstate 256 \
   --global-batch-size 8 \
   --learnable-pe \
