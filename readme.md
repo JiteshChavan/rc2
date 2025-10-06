@@ -1,3 +1,17 @@
+### Create env.
+- install cuda toolkit 12.8
+- pip install -r req.txt
+- remove the default torch installation as:
+- pip uninstall -y torch torchvision torchaudio torchtext xformers triton torchtriton pytorch-triton
+## Install the torch 2.8 cu128
+- pip3 install torch torchvision
+## Cd causal_conv1d
+- pip install -e . --no-build-isolation -vvv
+## Cd mamba
+- pip install -e . --no-build-isolation -vvv
+
+
+
 ### Install Causal conv -> mamba_ssm -> requirements.lock.txt
 ### Install both causal conv and mamba as pip install -e . --no-build-isolation -vvv
 ### environment should look something like this 

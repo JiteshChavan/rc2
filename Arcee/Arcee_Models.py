@@ -245,11 +245,13 @@ class LastStateWeaver(nn.Module):
 
     def __init__(self, hidden_size, ssm_dinner, ssm_dstate):
         super().__init__()
-        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(ssm_dinner, 2*hidden_size))
-    
+        self.d_state_collapse = nn.Parameter(torch.zeros(ssm_dstate))
+        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(ssm_dinner, 3*hidden_size))
+
     def forward(self, x, last_state):
-        scale, shift = self.adaLN_modulation(last_state.mean(dim=-1)).chunk(2, dim=-1)
-        return x + (modulate(x, shift, scale))
+        collapsed_state = torch.einsum("b d s , s -> b d", last_state, self.d_state_collapse)
+        scale, gate, shift = self.adaLN_modulation(collapsed_state).chunk(3, dim=-1)
+        return x + gate.unsqueeze(1) * (modulate(x, shift, scale))
 
 
 class Block(nn.Module):
@@ -1030,7 +1032,7 @@ def create_block(
     Creates a block with specified mixer every even layer, and MoE ffn every odd layer
     """
     assert ssm_cfg in ["Arcee", "Zigma", "NotArcee"]
-    assert scan_type in ["arcee_1", "arcee_8", "zigma_8"]
+    assert scan_type in ["arcee_1", "zigma_1", "arcee_8", "zigma_8"]
     factory_kwargs = {"device": device, "dtype": dtype}
     norm_cls = partial (nn.LayerNorm if not rms_norm else RMSNorm, eps=norm_eps, **factory_kwargs)
     
@@ -1218,7 +1220,8 @@ class Arcee(nn.Module, PyTorchModelHubMixin):
         else:
             block_kwargs = {}
         print(f"\n\tRegistered scan_type {scan_type}")
-        print (f"\tPermutations locked:{self.lock_permutations}")        
+        print (f"\tPermutations locked:{self.lock_permutations}")
+        
         
         self.blocks = nn.ModuleList(
             [
@@ -1374,7 +1377,7 @@ class Arcee(nn.Module, PyTorchModelHubMixin):
         
         assert initial_state is None
         for idx, block in enumerate(self.blocks):
-            x, residual, last_state = block (x, residual, initial_state=initial_state, return_last_state=True, y=c)
+            x, residual, last_state = block (x, residual, initial_state=initial_state, return_last_state=True if self.ssm_cfg == "Arcee" else False, y=c)
 
             if self.ssm_cfg == "Arcee":
                 assert last_state is not None

@@ -619,7 +619,7 @@ def main(args):
 
         # Save and display images:
         save_image(samples, f"{sample_dir}/image_FINAL_SAMPLE.jpg", nrow=4, normalize=True, value_range=(-1, 1))
-        wandb.log({"samples": wandb.Image(f"{sample_dir}/image_{total_steps+500}.jpg")}, step=total_steps+500, commit= True)
+        wandb.log({"samples": wandb.Image(f"{sample_dir}/image_FINAL_SAMPLE.jpg")}, step=total_steps+500, commit= True)
         del samples
         model.train()
     
@@ -648,7 +648,7 @@ if __name__ == "__main__":
         "--scan-type",
         type=str,
         default="none",
-        choices=["none", "Arcee_1", "Arcee_8", "Zigma_8"],
+        choices=["none", "Arcee_1", "Arcee_8", "Zigma_1", "Zigma_8"],
     )
     parser.add_argument("--block-type", type=str, default="normal", choices=["normal", "combined"])
 
