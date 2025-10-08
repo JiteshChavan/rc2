@@ -12,7 +12,7 @@ _ATOL_PROJ = 5e-2
 
 @pytest.mark.parametrize('wtype', [torch.float32])
 @pytest.mark.parametrize('itype', [torch.float32])
-@pytest.mark.parametrize('seqlen', [128, 256, 512, 1024, 2048, 4096])
+@pytest.mark.parametrize('seqlen', [1, 128, 256, 512, 1024, 2048, 4096])
 @pytest.mark.parametrize("return_last_state", [True, False])
 @pytest.mark.parametrize('has_delta_bias', [True])
 @pytest.mark.parametrize('delta_softplus', [True])

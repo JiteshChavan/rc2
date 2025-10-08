@@ -1,7 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2023, Tri Dao.
  ******************************************************************************/
-
 #pragma once
 
 #include <c10/util/BFloat16.h>
@@ -24,42 +23,9 @@
 #include "reverse_scan.cuh"
 #include "static_switch.h"
 
-#define SSM_DEBUG_CARRY
-
 template<typename scalar_t> __device__ __forceinline__ scalar_t conj(scalar_t x);
 template<> __device__ __forceinline__ float conj<float>(float x) { return x; }
 template<> __device__ __forceinline__ complex_t conj<complex_t>(complex_t x) { return std::conj(x); }
-
-// ------------------------------------------------------------------------------------
-// Reverse scan operator:
-// We must compose suffixes as  (… ⊗ a_{t+1}) ⊗ a_t  while the forward op is defined
-// as  a ⊗ b.  For the reverse pass we therefore swap argument order when combining.
-// This ensures the injected terminal seed (d_last_state) composes on the correct side.
-// ------------------------------------------------------------------------------------
-// template <typename weight_t>
-// struct SSMReverseOp {
-//   __device__ __forceinline__ float2 operator()(const float2 &l, const float2 &r) const {
-//     // forward op with swapped args
-//     return SSMScanOp<weight_t>()(r, l);
-//   }
-//   __device__ __forceinline__ float4 operator()(const float4 &l, const float4 &r) const {
-//     // forward op with swapped args
-//     return SSMScanOp<weight_t>()(r, l);
-//   }
-// };
-
-template <typename weight_t, typename scan_t>
-struct SSMRightSeedCallbackOp {
-  scan_t running_prefix;
-  __device__ explicit SSMRightSeedCallbackOp(scan_t seed) : running_prefix(seed) {}
-  template <typename T>
-  __device__ __forceinline__ T operator()(const T& block_aggregate) {
-    T out = SSMScanOp<weight_t>()(block_aggregate, running_prefix);
-    running_prefix = out;
-    return out;
-  }
-};
-
 
 template<int kNThreads_, int kNItems_, bool kIsEvenLen_, bool kIsVariableB_, bool kIsVariableC_,
          bool kDeltaSoftplus_, bool kHasZ_, typename input_t_, typename weight_t_>
@@ -92,7 +58,8 @@ struct Selective_Scan_bwd_kernel_traits {
     using BlockStoreT = cub::BlockStore<input_t, kNThreads, kNItems, cub::BLOCK_STORE_WARP_TRANSPOSE>;
     using BlockStoreVecT = cub::BlockStore<vec_t, kNThreads, kNLoads, cub::BLOCK_STORE_WARP_TRANSPOSE>;
     // using BlockScanT = cub::BlockScan<scan_t, kNThreads, cub::BLOCK_SCAN_RAKING_MEMOIZE>;
-    using BlockScanT = cub::BlockScan<scan_t, kNThreads, cub::BLOCK_SCAN_RAKING>;
+    // using BlockScanT = cub::BlockScan<scan_t, kNThreads, cub::BLOCK_SCAN_RAKING>;
+    using BlockScanT = cub::BlockScan<scan_t, kNThreads, cub::BLOCK_SCAN_WARP_SCANS>;
     // using BlockScanT = cub::BlockScan<scan_t, kNThreads, cub::BLOCK_SCAN_WARP_SCANS>;
     using BlockReverseScanT = BlockReverseScan<scan_t, kNThreads>;
     using BlockReduceT = cub::BlockReduce<scan_t, kNThreads>;
@@ -126,7 +93,34 @@ void selective_scan_bwd_kernel(SSMParamsBwd params) {
     using scan_t = typename Ktraits::scan_t;
 
     // Shared memory.
-    extern __shared__ char smem_[];
+    extern __shared__ __align__(16) char smem_[];
+    // -----------------------------------------------------------------------------------------------------------------------------
+    // Surgery: introduce deterministic block-wide seed slots
+    //  - block_prefix_seed : forward-direction seed (mirrors fwd kernel h0 injection)
+    //  - block_postfix_seed : reverse-direction seed (mirrors d_last_state injection)
+    // Only thread 0 writes these; all threads read after __syncthreads().
+    // This ensures a single, unambiguous seed per block scan (no warp-level over-injection).
+    // -----------------------------------------------------------------------------------------------------------------------------
+    __shared__ __align__(16) scan_t block_prefix_seed;
+    __shared__ __align__(16) scan_t block_postfix_seed;
+    const bool has_h0 = params.h0_ptr != nullptr; // from SSMParamsBase
+    // base pointers for optional upstream last_state gradients depositing gradients wrt h0 seed
+    // types: weight_t for real, complex_t for complex builds
+    const int batch_id = blockIdx.x;
+    const int dim_id = blockIdx.y;
+    const int group_id = dim_id / (params.dim_ngroups_ratio);
+    weight_t* __restrict__ d_last_state = params.d_last_state_ptr == nullptr
+        ? nullptr
+        : reinterpret_cast<weight_t*>(params.d_last_state_ptr)
+        + size_t(batch_id) * params.d_last_state_batch_stride
+        + size_t(dim_id) * params.d_last_state_d_stride;
+    
+    weight_t* __restrict__ dh0 = params.dh0_ptr == nullptr
+        ? nullptr
+        : reinterpret_cast<weight_t*>(params.dh0_ptr)
+        + size_t(batch_id) * params.dh0_batch_stride
+        + size_t(dim_id) * params.dh0_d_stride;
+
     // cast to lvalue reference of expected type
     // char *smem_loadstorescan = smem_ + 2 * MAX_DSTATE * sizeof(weight_t);
     // auto& smem_load = reinterpret_cast<typename BlockLoadT::TempStorage&>(smem_ + 2 * MAX_DSTATE * sizeof(weight_t));
@@ -142,49 +136,12 @@ void selective_scan_bwd_kernel(SSMParamsBwd params) {
     auto& smem_reduce_complex = *reinterpret_cast<typename Ktraits::BlockReduceComplexT::TempStorage*>(&smem_reduce);
     auto& smem_scan = *reinterpret_cast<typename Ktraits::BlockScanT::TempStorage*>(reinterpret_cast<char *>(&smem_reduce) + Ktraits::kSmemReduceSize);
     auto& smem_reverse_scan = *reinterpret_cast<typename Ktraits::BlockReverseScanT::TempStorage*>(reinterpret_cast<char *>(&smem_scan) + sizeof(typename Ktraits::BlockScanT::TempStorage));
+    weight_t *smem_delta_a = reinterpret_cast<weight_t *>(smem_ + Ktraits::kSmemSize);
+    scan_t *smem_running_postfix = reinterpret_cast<scan_t *>(smem_delta_a + 2 * MAX_DSTATE + kNThreads);
+    weight_t *smem_da = reinterpret_cast<weight_t *>(smem_running_postfix + MAX_DSTATE);
+    weight_t *smem_dbc = reinterpret_cast<weight_t *>(smem_da + MAX_DSTATE);
 
-    // -----------------------------------------------------------------------------------------------------------------------------
-    // Surgery: introduce deterministic block-wide seed slots
-    //  - block_prefix_seed : forward-direction seed (mirrors fwd kernel h0 injection)
-    //  - block_postfix_seed : reverse-direction seed (mirrors d_last_state injection)
-    // Only thread 0 writes these; all threads read after __syncthreads().
-    // This ensures a single, unambiguous seed per block scan (no warp-level over-injection).
-    // -----------------------------------------------------------------------------------------------------------------------------
-    __shared__ scan_t block_prefix_seed;
-    __shared__ scan_t block_postfix_seed;
-
-
-    // ---- aligned shared memory tail allocation ----
-    char* cursor = smem_ + Ktraits::kSmemSize;
-
-    // delta_a: 2*MAX_DSTATE for ping/pong + kNThreads scratch
-    auto* smem_delta_a = reinterpret_cast<weight_t*>(cursor);
-    cursor += (2 * MAX_DSTATE + kNThreads) * sizeof(weight_t);
-
-    // align cursor for scan_t (float2 / float4)
-    constexpr size_t align_scan = alignof(scan_t);
-    cursor = reinterpret_cast<char*>(
-        (reinterpret_cast<uintptr_t>(cursor) + (align_scan - 1)) & ~(align_scan - 1)
-    );
-
-    // running_postfix: MAX_DSTATE entries
-    auto* smem_running_postfix = reinterpret_cast<scan_t*>(cursor);
-    cursor += MAX_DSTATE * sizeof(scan_t);
-
-    // align cursor for weight_t again
-    constexpr size_t align_w = alignof(weight_t);
-    cursor = reinterpret_cast<char*>(
-        (reinterpret_cast<uintptr_t>(cursor) + (align_w - 1)) & ~(align_w - 1)
-    );
-
-    // per-state reductions
-    auto* smem_da  = reinterpret_cast<weight_t*>(cursor);
-    cursor += MAX_DSTATE * sizeof(weight_t);
-    auto* smem_dbc = reinterpret_cast<weight_t*>(cursor);
-
-    const int batch_id = blockIdx.x;
-    const int dim_id = blockIdx.y;
-    const int group_id = dim_id / (params.dim_ngroups_ratio);
+    
     input_t *u = reinterpret_cast<input_t *>(params.u_ptr) + batch_id * params.u_batch_stride
         + dim_id * params.u_d_stride;
     input_t *delta = reinterpret_cast<input_t *>(params.delta_ptr) + batch_id * params.delta_batch_stride
@@ -211,22 +168,6 @@ void selective_scan_bwd_kernel(SSMParamsBwd params) {
     float dD_val = 0;
     float ddelta_bias_val = 0;
 
-    // base pointers for optional upstream last_state gradients depositing gradients wrt h0 seed
-    // types: weight_t for real, complex_t for complex builds
-    weight_t* __restrict__ d_last_state = params.d_last_state_ptr == nullptr
-        ? nullptr
-        : reinterpret_cast<weight_t*>(params.d_last_state_ptr)
-        + size_t(batch_id) * params.d_last_state_batch_stride
-        + size_t(dim_id) * params.d_last_state_d_stride;
-    
-    weight_t* __restrict__ dh0 = params.dh0_ptr == nullptr
-        ? nullptr
-        : reinterpret_cast<weight_t*>(params.dh0_ptr)
-        + size_t(batch_id) * params.dh0_batch_stride
-        + size_t(dim_id) * params.dh0_d_stride;
-    
-    const bool has_h0 = params.h0_ptr != nullptr; // from SSMParamsBase
-
     constexpr int kChunkSize = kNThreads * kNItems;
     u += (params.n_chunks - 1) * kChunkSize;
     delta += (params.n_chunks - 1) * kChunkSize;
@@ -234,6 +175,12 @@ void selective_scan_bwd_kernel(SSMParamsBwd params) {
     Bvar += (params.n_chunks - 1) * kChunkSize * (!kIsComplex ? 1 : 2);
     Cvar += (params.n_chunks - 1) * kChunkSize * (!kIsComplex ? 1 : 2);
     for (int chunk = params.n_chunks - 1; chunk >= 0; --chunk) {
+        // calculate length of sequence segment in last chunk, helpful in case its a partial segment in the very last chunk
+        const int n_in_chunk = min (kChunkSize, params.seqlen - chunk * kChunkSize);
+        const int last_local = n_in_chunk - 1;
+        const int last_thread = last_local % kNThreads;
+        const int last_item = last_local / kNThreads;
+
         input_t u_vals[kNItems];
         input_t delta_vals_load[kNItems];
         input_t dout_vals_load[kNItems];
@@ -334,34 +281,42 @@ void selective_scan_bwd_kernel(SSMParamsBwd params) {
             if constexpr (!kIsComplex) {
                 #pragma unroll
                 for (int i = 0; i < kNItems; ++i) {
-                    const float delta_a_exp = exp2f(delta_vals[i] * A_scaled);
-                    thread_data[i] = make_float2(delta_a_exp, !kIsVariableB ? delta_vals[i] * float(u_vals[i]) : delta_vals[i] * float(u_vals[i]) * B_vals[i]);
-                    // each lane stores its own decay; no shifting to i-1
-                    thread_reverse_data[i].x = delta_a_exp;
+                    const bool valid_i = (i * kNThreads + threadIdx.x) < n_in_chunk;
+                    const float a_i = exp2f(delta_vals[i] * A_scaled);
+                    const float Bu_i = (!kIsVariableB)
+                        ? delta_vals[i] * float(u_vals[i])
+                        : delta_vals[i] * float(u_vals[i]) * B_vals[i];
+
+                    // Forward monoid element (a, b). Identity for invalid.
+                    thread_data[i] = make_float2(valid_i ? a_i : 1.f,
+                                                 valid_i ? Bu_i : 0.f);
+
+                    // Seed left-neighbor 'a' used by reverse scan. Identity for invalid.
                     if (i == 0) {
-                      smem_delta_a[threadIdx.x == 0 ? state_idx + (chunk % 2) * MAX_DSTATE
-                                                     : threadIdx.x + 2 * MAX_DSTATE] = delta_a_exp;
+                        smem_delta_a[threadIdx.x == 0 ? state_idx + (chunk % 2) * MAX_DSTATE
+                                                      : threadIdx.x + 2 * MAX_DSTATE] = a_i;
                     } else {
-                      thread_reverse_data[i - 1].x = delta_a_exp;
+                        thread_reverse_data[i - 1].x = valid_i ? a_i : 1.f;
                     }
-                    // reverse seed should be dout * C (B must NOT appear)
-                    thread_reverse_data[i].y = dout_vals[i] *
-                        (!kIsVariableC ? C_val : C_vals[i]);
-                    //if (i == 0) {
-                    //    smem_delta_a[threadIdx.x == 0 ? state_idx + (chunk % 2) * MAX_DSTATE : threadIdx.x + 2 * MAX_DSTATE] = delta_a_exp;
-                    //} else {
-                    //    thread_reverse_data[i - 1].x = delta_a_exp;
-                    //}
-                    //thread_reverse_data[i].y = dout_vals[i] *
-                    //    (!kIsVariableC
-                    //     ? (!kIsVariableB ? B_val * C_val : C_val)
-                    //     : (!kIsVariableB ? B_val * C_vals[i] : C_vals[i]));
+
+                    // Reverse injection (C * dout). Zero for invalid.
+                    thread_reverse_data[i].y =
+                        valid_i ? (dout_vals[i] * (!kIsVariableC ? C_val : C_vals[i])) : 0.f;
                 }
                 __syncthreads();
-                thread_reverse_data[kNItems - 1].x = threadIdx.x == kNThreads - 1
-                    ? (chunk == params.n_chunks - 1 ? 1.f : smem_delta_a[state_idx + ((chunk + 1) % 2) * MAX_DSTATE])
-                    : smem_delta_a[threadIdx.x + 1 + 2 * MAX_DSTATE];
-                
+                // Set right neighbour mult "a_right" with partial chunk tail awareness
+                if (chunk == params.n_chunks - 1) {
+                    if (threadIdx.x < last_thread) {
+                        thread_reverse_data[kNItems - 1].x = smem_delta_a[threadIdx.x + 1 + 2 * MAX_DSTATE];
+                    } else {
+                        thread_reverse_data[kNItems - 1].x = 1.f; // Identity after true tail (in case of partial chunk)
+                    }
+                } else {
+                    thread_reverse_data[kNItems - 1].x = (threadIdx.x == kNThreads - 1)
+                        ? smem_delta_a[state_idx + ((chunk + 1) % 2) * MAX_DSTATE]
+                        : smem_delta_a[threadIdx.x + 1 + 2 * MAX_DSTATE];
+                }
+                // Initialize running total
                 // ------------------------------------------------------------------------------------------------------------------------
                 // BLOCK PREFIX SEED (forward-like scan)
                 // Thread 0 computes:
@@ -394,50 +349,49 @@ void selective_scan_bwd_kernel(SSMParamsBwd params) {
                     thread_data, thread_data, SSMScanOp<weight_t>(), prefix_op
                 );
 
-                // ------------------------------------------------------------------------------------------------------------------------
-                // BLOCK POSTFIX SEED (reverse-like scan)
-                // Thread 0 computes:
-                //  - carry from *later* chunk if chunk < n_chunks - 1
-                //  - d_last_state if this is the terminal chunk
-                //  - identity otherwise
-                // Writes into block_postfix_seed, then __syncthreads()
-                // All threads use same postfix_op constructed from this shared seed.
-                // ------------------------------------------------------------------------------------------------------------------------
                 if (threadIdx.x == 0) {
                     scan_t postfix = make_float2(1.f, 0.f);
                     if (chunk < params.n_chunks - 1) {
                         postfix = smem_running_postfix[state_idx];
-                    } else if (d_last_state != nullptr) {
-                        float dls = float(d_last_state[size_t(state_idx) * params.d_last_state_dstate_stride]);
-                        postfix.y = dls;
                     }
                     block_postfix_seed = postfix;
                 }
+                if (d_last_state != nullptr && chunk == params.n_chunks - 1) {
+                    if (threadIdx.x == last_thread) {
+                        if (last_item < kNItems) {
+                            float dls = float (d_last_state[size_t(state_idx) * params.d_last_state_dstate_stride]);
+                            thread_reverse_data[last_item].y += dls; // put tail grad at t=L-1
+                        }
+                    }
+                }
                 __syncthreads();
-                // Reverse scan: same monoid, seed composed on the RIGHT.
-                SSMRightSeedCallbackOp<weight_t, scan_t> postfix_op(block_postfix_seed);
+                SSMScanPrefixCallbackOp<weight_t> postfix_op(block_postfix_seed);
                 typename Ktraits::BlockReverseScanT(smem_reverse_scan).InclusiveReverseScan(
                     thread_reverse_data, thread_reverse_data, SSMScanOp<weight_t>(), postfix_op
                 );
                 // save running carry for next (earlier) chunk in reverse scan
                 if (threadIdx.x == 0) { smem_running_postfix[state_idx] = postfix_op.running_prefix; }
-                // dh0 is written once at the end for all states (see below)
-
-                // --- DEBUG TAP: dump carry per chunk if buffer provided ---
-#if defined(SSM_DEBUG_CARRY)
-                if (threadIdx.x == 0 && params.dh0_debug_ptr != nullptr) {
-                    reinterpret_cast<float*>(params.dh0_debug_ptr)[chunk * params.dstate + state_idx] = postfix_op.running_prefix.y;
+                if (chunk == 0 && dh0 != nullptr && threadIdx.x == 0) {
+                    const float a0 = exp2f(delta_vals[0] * A_scaled);  // same A_scaled
+                    const float y0 = thread_reverse_data[0].y;         // dL/dx0
+                    dh0[state_idx * params.dh0_dstate_stride] += a0 * y0;  // dL/dh0
                 }
-#endif
 
                 weight_t dA_val = 0, dBC_val = 0;
                 weight_t dB_vals[kNItems], dC_vals[kNItems];
                 #pragma unroll
                 for (int i = 0; i < kNItems; ++i) {
-                    const float dx = thread_reverse_data[i].y;
-                    // must multiply by B for ∂x/∂u path
-                    const float B_eff = (!kIsVariableB ? float(B_val) : float(B_vals[i]));
-                    const float ddelta_u = dx * B_eff;
+                    // Mask invalid items in a partial last chunk
+                    const int g = i * kNThreads + threadIdx.x; // position within this chunk
+                    const bool valid = (g < n_in_chunk);
+                    if (!valid) {continue;}
+                    // changed
+                    const float dx = thread_reverse_data[i].y;   // = dL/dx_t
+                    // multiply by B exactly once for the input-injection path
+                    //const float ddelta_u = (!kIsVariableB) ? dx * B_val
+                    //                                       : dx * B_vals[i];
+                    const float ddelta_u = (!kIsVariableB) ? dx          : dx * B_vals[i];
+
                     du_vals[i] += ddelta_u * delta_vals[i];
                     const float a = thread_data[i].y - (!kIsVariableB ? delta_vals[i] * float(u_vals[i]) : delta_vals[i] * float(u_vals[i]) * B_vals[i]);
                     ddelta_vals[i] += ddelta_u * float(u_vals[i]) + dx * A_val * a;
@@ -451,9 +405,7 @@ void selective_scan_bwd_kernel(SSMParamsBwd params) {
                     }
                     if constexpr (kIsVariableB) { dB_vals[i] = dx * delta_vals[i] * float(u_vals[i]); }
                     if constexpr (kIsVariableC) {
-                        // dC should be dout * x (independent of B)
-                        dC_vals[i] = dout_vals[i] * thread_data[i].y;
-                        // dC_vals[i] = dout_vals[i] * (!kIsVariableB ? thread_data[i].y * B_val : thread_data[i].y);
+                        dC_vals[i] = dout_vals[i] * (!kIsVariableB ? thread_data[i].y * B_val : thread_data[i].y);
                     }
                 }
                 // Block-exchange to make the atomicAdd's coalesced, otherwise they're much slower
@@ -492,39 +444,133 @@ void selective_scan_bwd_kernel(SSMParamsBwd params) {
             } else {
                 #pragma unroll
                 for (int i = 0; i < kNItems; ++i) {
-                    // Pytorch's implementation of complex exp (which calls thrust) is very slow
-                    complex_t delta_a_exp = cexp2f(delta_vals[i] * A_scaled);
-                    weight_t B_delta_u_val = !kIsVariableB ? delta_vals[i] * float(u_vals[i]) : B_vals[i] * delta_vals[i] * float(u_vals[i]);
-                    thread_data[i] = make_float4(delta_a_exp.real_, delta_a_exp.imag_, B_delta_u_val.real_, B_delta_u_val.imag_);
+                    const bool valid_i = (i * kNThreads + threadIdx.x) < n_in_chunk;
+                    complex_t a_i = cexp2f(delta_vals[i] * A_scaled);
+                    weight_t  Bu_i = (!kIsVariableB)
+                        ? (delta_vals[i] * float(u_vals[i]))
+                        : (B_vals[i] * delta_vals[i] * float(u_vals[i]));
+
+                    // Forward monoid (a, b) as (ar, ai, br, bi). Identity for invalid.
+                    thread_data[i] = valid_i
+                        ? make_float4(a_i.real_, a_i.imag_,  Bu_i.real_,  Bu_i.imag_)
+                        : make_float4(1.f,       0.f,        0.f,         0.f);
+
+                    // Left-neighbor 'a' for reverse (store conj(a) parts). Identity for invalid.
                     if (i == 0) {
                         smem_delta_a[threadIdx.x == 0 ? state_idx + (chunk % 2) * MAX_DSTATE
-                                                     : threadIdx.x + 2 * MAX_DSTATE] = delta_a_exp;
+                                                      : threadIdx.x + 2 * MAX_DSTATE] = a_i;
                     } else {
-                        thread_reverse_data[i - 1].x = delta_a_exp.real_;
-                        thread_reverse_data[i - 1].y = -delta_a_exp.imag_;  // NOTE minus
+                        thread_reverse_data[i - 1].x = valid_i ? a_i.real_ : 1.f;
+                        thread_reverse_data[i - 1].y = valid_i ? -a_i.imag_ : 0.f;
                     }
-                    // correct reverse seed: 2*dout*conj(C) (no B)
-                    complex_t dout_C = 2 * dout_vals[i] * conj(!kIsVariableC ? C_val : C_vals[i]);
-                    thread_reverse_data[i].z = dout_C.real_;
-                    thread_reverse_data[i].w = dout_C.imag_;  
+
+                    // Reverse injection: 2*dout * conj(C). Zero for invalid.
+                    if (valid_i) {
+                        complex_t dout_C = 2 * dout_vals[i] * conj(!kIsVariableC ? C_val : C_vals[i]);
+                        thread_reverse_data[i].z = dout_C.real_;
+                        thread_reverse_data[i].w = dout_C.imag_;
+                    } else {
+                        thread_reverse_data[i].z = 0.f;
+                        thread_reverse_data[i].w = 0.f;
+                    }
                 }
                 __syncthreads();
-                // fill final lane decay
-                complex_t delta_a_tail = threadIdx.x == kNThreads - 1
-                    ? (chunk == params.n_chunks - 1 ? 1.f : smem_delta_a[state_idx + ((chunk + 1) % 2) * MAX_DSTATE])
-                    : smem_delta_a[threadIdx.x + 1 + 2 * MAX_DSTATE];
-                thread_reverse_data[kNItems - 1].x = delta_a_tail.real_;
-                thread_reverse_data[kNItems - 1].y = -delta_a_tail.imag_;
+                // Set right neighbour multiplier "a_right" with partial chunk tail awareness (complex)
+                complex_t a_right;
+                if (chunk == params.n_chunks - 1) {
+                    if (threadIdx.x < last_thread) {
+                        a_right = smem_delta_a[threadIdx.x + 1 + 2 * MAX_DSTATE];
+                    } else {
+                        a_right = complex_t(1.f, 0.f); // identity after true tail
+                    }
+                } else {
+                    a_right = (threadIdx.x == kNThreads - 1)
+                        ? smem_delta_a[state_idx + ((chunk + 1) % 2) * MAX_DSTATE]
+                        : smem_delta_a[threadIdx.x + 1 + 2 * MAX_DSTATE];
+                }
+                thread_reverse_data[kNItems - 1].x = a_right.real_;
+                thread_reverse_data[kNItems - 1].y = -a_right.imag_;
                 
-            
+                // ------------------------------------------------------------------------------------------------------------------------
+                // Complex FORWARD BLOCK SEED:
+                // ------------------------------------------------------------------------------------------------------------------------
+                if (threadIdx.x == 0) {
+                    scan_t prefix = make_float4(1.f, 0.f, 0.f, 0.f);
+                    if (chunk > 0) {
+                        prefix = x != nullptr
+                            ? x[(chunk - 1) * params.dstate + state_idx]
+                            : make_float4(1.f, 0.f, 0.f, 0.f);
+                    } else if (has_h0) {
+                        const complex_t* __restrict__ h0c = reinterpret_cast<const complex_t*>(params.h0_ptr);
+                        complex_t s0 = h0c[
+                            size_t(batch_id) * params.h0_batch_stride +
+                            size_t(dim_id) * params.h0_d_stride +
+                            size_t(state_idx) * params.h0_dstate_stride
+                        ];
+                        prefix = make_float4 (1.f, 0.f, s0.real_, s0.imag_);
+                    }
+                    block_prefix_seed = prefix;
+                }
+                __syncthreads();
+                SSMScanPrefixCallbackOp<weight_t> prefix_op(block_prefix_seed);
+                typename Ktraits::BlockScanT(smem_scan).InclusiveScan(
+                    thread_data, thread_data, SSMScanOp<weight_t>(), prefix_op
+                );
 
+                // ------------------------------------------------------------------------------------------------------------------------
+                // Complex REVERSE BLOCK SEED:
+                // ------------------------------------------------------------------------------------------------------------------------
+                if (threadIdx.x == 0) {
+                    scan_t postfix = make_float4(1.f, 0.f, 0.f, 0.f);
+                    if (chunk < params.n_chunks - 1) {
+                        postfix = smem_running_postfix[state_idx];
+                    }
+                    block_postfix_seed = postfix;
+                }
+
+                if (d_last_state != nullptr && chunk == params.n_chunks - 1) {
+                    if (threadIdx.x == last_thread) {
+                        if (last_item < kNItems) {
+                            complex_t dls = d_last_state[size_t(state_idx) * params.d_last_state_dstate_stride];
+                            thread_reverse_data[last_item].z += dls.real_;
+                            thread_reverse_data[last_item].w += dls.imag_;
+                        }
+                    }
+                }
+                __syncthreads();
+                // Reverse scan (complex): same monoid, seed on RIGHT
+                SSMScanPrefixCallbackOp<weight_t> postfix_op(block_postfix_seed);
+                typename Ktraits::BlockReverseScanT(smem_reverse_scan).InclusiveReverseScan(
+                    thread_reverse_data, thread_reverse_data, SSMScanOp<weight_t>(), postfix_op
+                );
+                if (threadIdx.x == 0) { smem_running_postfix[state_idx] = postfix_op.running_prefix; }
+                if (chunk == 0 && dh0 != nullptr && threadIdx.x == 0) {
+                    // a0 = exp (delta[0] * A) in base-2 form (given A_scaled = Re(A)*log2e, Im(A))
+                    complex_t a0 = cexp2f(delta_vals[0] * A_scaled);
+                    
+                    // g0 = dL/dx0 from reverse scan output (thread 0, item 0)
+                    complex_t g0 (thread_reverse_data[0].z, thread_reverse_data[0].w);
+
+                    // dL/dh0 = conj(a0) * g0 (since x0 = a0 * h0 + ... => d x0 / d h0 = a0)
+                    dh0[state_idx * params.dh0_dstate_stride] += conj(a0) * g0;
+                }
+                
                 weight_t dA_val = 0, dBC_val = 0;
                 weight_t dB_vals[kNItems], dC_vals[kNItems];
                 #pragma unroll
                 for (int i = 0; i < kNItems; ++i) {
+                    // Mask invalid items in a partial last chunk (complex)
+                    const int g = i * kNThreads + threadIdx.x;
+                    const bool valid = (g < n_in_chunk);
+                    if (!valid) {continue;}
                     complex_t x = complex_t(thread_data[i].z, thread_data[i].w);
                     complex_t dx = complex_t(thread_reverse_data[i].z, thread_reverse_data[i].w);
-                    float ddelta_u = (dx * conj(!kIsVariableB ? B_val : B_vals[i])).real_;
+                    // changed
+                    // multiply by conj(B) exactly once for the input-injection path
+                    float ddelta_u = (!kIsVariableB)
+                        ? (dx * conj(B_val)).real_
+                        : (dx * conj(B_vals[i])).real_;
+
                     if constexpr (!kIsVariableB || !kIsVariableC) {
                         if constexpr (!kIsVariableB) {  // dBC_val is dB_val
                             dBC_val += (2 * dout_vals[i]) * conj(!kIsVariableC ? x : x * C_vals[i]);
@@ -538,9 +584,7 @@ void selective_scan_bwd_kernel(SSMParamsBwd params) {
                     dA_val += delta_vals[i] * dx * a_conj;
                     if constexpr (kIsVariableB) { dB_vals[i] = dx * delta_vals[i] * float(u_vals[i]); }
                     if constexpr (kIsVariableC) {
-                        // dC should be 2 * dout * conj(x) (independent of B :) )
-                        dC_vals[i] = (2 * dout_vals[i]) * conj(x);
-                        // dC_vals[i] = (2 * dout_vals[i]) * conj(!kIsVariableB ? x * B_val : x);
+                        dC_vals[i] = (2 * dout_vals[i]) * conj(!kIsVariableB ? x * B_val : x);
                     }
                 }
                 // Block-exchange to make the atomicAdd's coalesced, otherwise they're much slower
@@ -641,22 +685,6 @@ void selective_scan_bwd_kernel(SSMParamsBwd params) {
                         !kIsVariableB ? dBC_val * conj(B[state_idx * params.B_dstate_stride]) : dBC_val);
         }
     }
-
-    // Write out dh0 (gradient wrt initial state) from final reverse carry after chunk 0.
-    if (dh0 != nullptr) {
-        __syncthreads();
-        for (int state_idx = threadIdx.x; state_idx < params.dstate; state_idx += blockDim.x) {
-            scan_t carry0 = smem_running_postfix[state_idx];
-            if constexpr (!kIsComplex) {
-                float g0 = carry0.y;
-                dh0[size_t(state_idx) * params.dh0_dstate_stride] = (weight_t)g0;
-            } else {
-                complex_t g0 = complex_t(carry0.z, carry0.w);
-                dh0[size_t(state_idx) * params.dh0_dstate_stride] = g0;
-            }
-        }
-    }
-
 }
 
 template<int kNThreads, int kNItems, typename input_t, typename weight_t>
