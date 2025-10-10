@@ -618,7 +618,7 @@ def main(args):
             samples = vae.decode(samples / 0.18215).sample
 
         # Save and display images:
-        save_image(samples, f"{sample_dir}/image_FINAL_SAMPLE.jpg", nrow=4, normalize=True, value_range=(-1, 1))
+        save_image(samples, f"{sample_dir}/image_FINAL_SAMPLE.jpg", nrow=16, normalize=True, value_range=(-1, 1))
         wandb.log({"samples": wandb.Image(f"{sample_dir}/image_FINAL_SAMPLE.jpg")}, step=total_steps+500, commit= True)
         del samples
         model.train()
