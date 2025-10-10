@@ -168,11 +168,15 @@ def main(args):
         os.makedirs(sample_dir, exist_ok=True)
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
-
+        if args.use_wandb:
+            mode = "online"
+        else:
+            mode = "disabled"
         wandb.init(
             project="Arcee",
             config=vars(args),
             name=experiment_index,
+            mode=mode,
         )
     else:
         logger = create_logger(None)
@@ -688,7 +692,7 @@ if __name__ == "__main__":
     # RESUME TRAINING
     parser.add_argument("--model-ckpt", type=str, default="")
     parser.add_argument("--resume", action="store_true")
-
+    parser.add_argument("--use-wandb", action="store_true")
         
     
 
