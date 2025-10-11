@@ -1,3 +1,11 @@
+### setup ffhq1024 datase
+- cd data_prep/ffhq1024
+- bash download.sh
+- python convert.py
+- there should be a folder "real_samples" for fid eval reference and train.lmdb in the directory after the scripts are successful/
+
+
+
 ### Create env.
 - install cuda toolkit 12.8 ( try conda install -c "nvidia/label/cuda-12.8.0" cuda-toolkit)
 - pip install -r req.txt
