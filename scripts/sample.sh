@@ -1,16 +1,16 @@
-python ../Arcee/Sample2.py ODE --ckpt results/3kstepsArcee_11k/checkpoints/content.pth \
+python ../Arcee/Sample2.py ODE --ckpt results/time_Arcee8/checkpoints/content.pth \
     --inference-dir inferences \
-    --model Arcee-XS/2 \
-    --ssm-dstate 64 \
-    --scan-type Arcee_1 \
+    --scan-type Arcee_8\
+    --model Arcee-B/2\
+    --ssm-dstate 256 \
     --block-type normal \
     --rms-norm \
     --fused-add-norm \
     --image-size 256 \
     --num-sampling-steps 50\
-    --global-batch-size 16\
+    --global-batch-size 1\
     --path-type GVP \
     --learnable-pe \
-    #--ema \
+    --measure-time \
     #--compute-nfe \
-    #--measure-time \
+    #--ema \

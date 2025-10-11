@@ -4,7 +4,9 @@ from datasets_prep.data_transforms import center_crop_arr
 from datasets_prep.latent_datasets import LatentDataset, LatentMemmapDataset
 from datasets_prep.lmdb_datasets import LMDBDataset
 from datasets_prep.lsun import LSUN
+
 from torchvision.datasets import CIFAR10, ImageNet
+
 
 
 def get_dataset(args):
@@ -132,4 +134,13 @@ def get_dataset(args):
             ]
         )
         dataset = LMDBDataset(root=args.datadir, name="ffhq", train=True, transform=train_transform)
+    elif args.dataset == "ffhq_1024":
+        train_transform = transforms.Compose(
+            [
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+            ]
+        )
+        dataset = LMDBDataset(root=args.datadir, name="ffhq_1024", train=True, transform=train_transform, is_encoded=True)
     return dataset

@@ -51,6 +51,7 @@ class NFECount(nn.Module):
 
 
 def main(mode, args):
+    print (f"scan+type {args.scan_type}!!!!!!\n")
     # Setup PyTorch:
     torch.manual_seed(args.seed)
     torch.set_grad_enabled(False)

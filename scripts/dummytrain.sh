@@ -1,4 +1,4 @@
-torchrun --standalone --nproc_per_node=1 ../Arcee/dummytrain.py --exp ReplaceArcee_1NoStateweaver --datadir ../data/celeba256/lmdb_new --dataset celeba_256 --eval-refdir ../data/celeba256/real_samples \
+torchrun --standalone --nproc_per_node=1 ../Arcee/train.py --exp ffhqtest --datadir ../data/celeba256/lmdb_new --dataset celeba_256 --eval-refdir ../data/celeba256/real_samples \
   --image-size 256 \
   --num-classes 1 \
   --block-type normal \
@@ -7,12 +7,12 @@ torchrun --standalone --nproc_per_node=1 ../Arcee/dummytrain.py --exp ReplaceArc
   --ssm-dstate 256 \
   --train-steps 5000 \
   --eval-every 40001 \
-  --plot-every 100 \
+  --plot-every 6 \
   --ckpt-every 10000 \
-  --log-every 3 \
-  --global-batch-size 8 \
-  --sample-bs 8 \
-  --eval-bs 4 \
+  --log-every 1 \
+  --global-batch-size 1 \
+  --sample-bs 1 \
+  --eval-bs 1 \
   --lr 1e-4 \
   --learnable-pe \
   --path-type GVP \
@@ -21,3 +21,4 @@ torchrun --standalone --nproc_per_node=1 ../Arcee/dummytrain.py --exp ReplaceArc
   --fused-add-norm \
   --drop-path 0.0 \
   --save-content-every 50000
+  # --use-wandb
