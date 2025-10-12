@@ -1205,14 +1205,12 @@ class Arcee(nn.Module, PyTorchModelHubMixin):
             return block_kwargs
         
         self.lock_permutations = False
-        self.single_path = None
         scan_type = scan_type.lower()
         self.scan_type = scan_type
         if scan_type.startswith("arcee") or scan_type.startswith("zigma"):
             block_kwargs = gen_paths(grid_size, scan_type)
             if scan_type == "arcee_1":
                 self.lock_permutations = True
-                self.single_path = {}
                 self.register_buffer("locked_permutation_path", block_kwargs["zigzag_paths"])
                 self.register_buffer("locked_permutation_path_r", block_kwargs["zigzag_paths_reverse"])
                 # TODO: remove redundant asserts
@@ -1374,7 +1372,7 @@ class Arcee(nn.Module, PyTorchModelHubMixin):
         if self.lock_permutations:
             # assert that len(zzpaths)==1 and permute once
             # TODO: Remove redundant asserts
-            assert self.single_path is not None and self.locked_permutation_path.shape[0] == 1 and self.locked_permutation_path_r.shape[0] == 1
+            assert self.locked_permutation_path.shape[0] == 1 and self.locked_permutation_path_r.shape[0] == 1
             _perm = self.locked_permutation_path[0]
             x = torch.gather(x, 1, _perm[None, :, None].expand_as(x)) # x (B, T, C)
 
