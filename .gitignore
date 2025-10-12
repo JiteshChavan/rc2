@@ -1,5 +1,6 @@
-data_prep/celeba/real_samples/*
-data_prep/celeba/train.lmdb/
+data_prep/*/real_samples/*
+data_prep/*/train.lmdb/
 **/__pycache__/**
 scripts/wandb/
 scripts/results/
+**/*.so

@@ -1,7 +1,7 @@
 export CUDA_VISIBLE_DEVICES=0,1
 
 NUM_GPUS=2
-BATCH_SIZE=128
+BATCH_SIZE=96
 EVAL_BS=40
 
 GLOBAL_BATCH_SIZE=$((BATCH_SIZE * NUM_GPUS))
@@ -28,5 +28,5 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train.py --exp Arcee-8
   --rms-norm \
   --fused-add-norm \
   --drop-path 0.0 \
-  --save-content-every 5000 \
+  --save-content-every 10000 \
   --use-wandb

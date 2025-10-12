@@ -153,8 +153,6 @@ timm
 tinycss2
 tokenizers
 tomli
-torch-dct
-torchdiffeq
 tornado
 traitlets
 transformers
