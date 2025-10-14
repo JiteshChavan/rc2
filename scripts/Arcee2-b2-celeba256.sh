@@ -1,14 +1,41 @@
+export WANDB_API_KEY='2f92f218fe46708930c460c6f57055ac6ce1361c'
 export CUDA_VISIBLE_DEVICES=0, 1
+
+# to start a brand new run 
+# rm -rf run_state/$EXP
+# rm -rf results/"$EXP"/
+# comment out --resume flag
+EXP="Arcee2-B2-celeba256"
+STATE_DIR="run_state/${EXP}"
+RUN_ID_FILE="${STATE_DIR}/wandb_run_id.txt"
+mkdir -p "${STATE_DIR}"
+# Resume if we already have a saved run
+if [[ -f "${RUN_ID_FILE}" ]]; then
+  export WANDB_RUN_ID="$(
+  <"$RUN_ID_FILE"
+  )"
+  export WANDB_RESUME="must"
+else
+  export WANDB_RUN_ID="$(
+python - <<'PY'
+from wandb.util import generate_id
+print(generate_id())
+PY
+)"
+  echo "$WANDB_RUN_ID" > "${RUN_ID_FILE}"
+  export WANDB_RESUME="allow"
+fi
+
 
 # 48 GB, H100 is 80GB supports 96 batchsize, lets set per gpu batch size = 48 to be safe
 
 NUM_GPUS=2
-BATCH_SIZE=48
-EVAL_BS=32
-GRAD_ACCUM_STEPS=2
+BATCH_SIZE=24
+EVAL_BS=24
+GRAD_ACCUM_STEPS=4
 GLOBAL_BATCH_SIZE=$((BATCH_SIZE * NUM_GPUS))
 
-torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train_grad_acc.py --exp Arcee2-B2-celeba256 --datadir ../data_prep/celeba256/ --dataset celeba_256 --eval-refdir ../data_prep/celeba256/real_samples \
+torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train_grad_acc.py --exp $EXP  --datadir ../data_prep/celeba256/ --dataset celeba_256 --eval-refdir ../data_prep/celeba256/real_samples \
   --image-size 256 \
   --num-classes 1 \
   --block-type normal \
@@ -32,4 +59,5 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train_grad_acc.py --ex
   --fused-add-norm \
   --drop-path 0.0 \
   --save-content-every 5000 \
-  --use-wandb
+  --use-wandb \
+  #--resume \

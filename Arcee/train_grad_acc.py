@@ -1,6 +1,8 @@
 use_ema_for_eval = False
 use_ema_for_samples = False
 # utils
+import shutil
+import random
 import gc
 import math
 import sys
@@ -51,7 +53,7 @@ import dnnlib
 from pytorch_fid import metric_main, metric_utils
 
 import wandb
-os.environ['WANDB_API_KEY'] = '2f92f218fe46708930c460c6f57055ac6ce1361c'
+
 
 @torch.no_grad()
 def update_ema(ema_model, model, decay=0.9999):
@@ -179,6 +181,8 @@ def main(args):
             name=experiment_index,
             mode=mode,
         )
+        print("W&B run id:", wandb.run.id)
+        print("W&B url:", wandb.run.url)
     else:
         logger = create_logger(None)
 
@@ -190,8 +194,8 @@ def main(args):
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
     model = DDP(model.to(device), device_ids=[rank], find_unused_parameters=False)
-    if rank == 0:
-        wandb.watch(model.module if hasattr(model, "module") else model, log="all")
+    #if rank == 0:
+    #    wandb.watch(model.module if hasattr(model, "module") else model, log="gradients", log_freq=1000, log_graph=False)
 
     transport = create_transport(
         args.path_type,
@@ -254,7 +258,7 @@ def main(args):
         del checkpoint
     elif args.resume and os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
         checkpoint_file = os.path.join(checkpoint_dir, "content.pth")
-        checkpoint = torch.load(checkpoint_file, map_location=torch.device(f"cuda:{device}"))
+        checkpoint = torch.load(checkpoint_file, map_location=torch.device(f"cuda:{device}"), weights_only=False)
         init_epoch = checkpoint["epoch"]
         init_step = checkpoint["step"] + 1
         model.module.load_state_dict(checkpoint["model"])
@@ -264,8 +268,25 @@ def main(args):
         for g in opt.param_groups:
             g["lr"] = args.lr
 
+
+        if "rng_state" in checkpoint:
+            try:
+                random.setstate(checkpoint["rng_state"]["python"])
+                np.random.set_state(checkpoint["rng_state"]["numpy"])
+                
+                torch.set_rng_state(checkpoint["rng_state"]["torch"])
+                cuda_states = checkpoint["rng_state"]["cuda"]
+                if isinstance(cuda_states, (list, tuple)):
+                    torch.cuda.set_rng_state(cuda_states[device], device=device)
+                else:
+                    torch.cuda.set_rng_state(cuda_states, device=device)
+            except Exception as e:
+                if rank == 0:
+                    logger.warning(f"Could not fully restore RNG state: {e}")
+        
+        
+
         logger.info("=> resume checkpoint (epoch {})".format(checkpoint["epoch"]))
-        del checkpoint
     else:
         init_epoch = 0
         init_step = 0
@@ -285,6 +306,33 @@ def main(args):
         pin_memory=True,
         drop_last=True,
     )
+    micro_idx_in_epoch = 0
+
+    # Restore dataloader state
+    restored_epoch = None
+    if args.resume and os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
+        if "data_loader_state" in checkpoint:
+            di = checkpoint["data_loader_state"]
+            epoch = int(di.get("epoch", init_epoch))
+            restored_epoch = epoch
+            sampler.set_epoch(epoch)
+            data_iter = iter(loader)
+            # clip just in case shapes changed
+            micro_idx_in_epoch = min(int(di.get("micro_idx_in_epoch", 0)), len(loader))
+            # fast-forward to the same spot
+            for _ in range(micro_idx_in_epoch):
+                try:
+                    next(data_iter)
+                except StopIteration:
+                    # if saved index == len(loader), roll to next epoch
+                    epoch += 1
+                    sampler.set_epoch(epoch)
+                    data_iter = iter(loader)
+                    micro_idx_in_epoch = 0
+                    break
+        del checkpoint
+    else:
+        data_iter = iter(loader)
 
     logger.info(f"Dataset contains {len(dataset):,} images ({args.datadir})")
 
@@ -331,23 +379,31 @@ def main(args):
 
     total_steps = args.train_steps
     current_step = init_step
-    epoch = init_epoch
-    steps_per_epoch = math.ceil(len(dataset) / args.global_batch_size * args.grad_accum_steps)
-    sampler.set_epoch(epoch)
-    data_iter = iter(loader)
+    steps_per_epoch = math.ceil(len(loader) / args.grad_accum_steps)
+    if restored_epoch is None:
+        epoch = init_epoch
+        sampler.set_epoch(epoch)
+        data_iter = iter(loader)
+    
+
     def next_batch():
         """Get next batch; if dataloader is exhausted, reshuffle and bump epoch."""
-        nonlocal data_iter, epoch
+        nonlocal data_iter, epoch, micro_idx_in_epoch
         try:
-            return next(data_iter)
+            batch = next(data_iter)
+            micro_idx_in_epoch += 1        
+            return batch
         except StopIteration:
             epoch += 1
             sampler.set_epoch(epoch)  # shuffle for the next pass
+            micro_idx_in_epoch = 0
             if pbar is not None and dist.get_rank() == 0:
                 pbar.set_description(f"epoch: {epoch}")
             logger.info(f"Beginning epoch {epoch}...")
             data_iter = iter(loader)
-            return next(data_iter)
+            batch = next(data_iter)
+            micro_idx_in_epoch = 1
+            return batch
     # progress bar on rank 0
     pbar = None
     if dist.get_rank() == 0:
@@ -463,6 +519,18 @@ def main(args):
                     "model": model.module.state_dict(),
                     "opt": opt.state_dict(),
                     "ema": ema.state_dict(),
+
+                    "data_loader_state": {
+                        "epoch": epoch,
+                        "micro_idx_in_epoch": int(micro_idx_in_epoch),  # how many micro-batches already consumed this epoch
+                    },
+
+                    "rng_state": {
+                        "python": random.getstate(),
+                        "numpy": np.random.get_state(),
+                        "torch": torch.get_rng_state(),
+                        "cuda": torch.cuda.get_rng_state_all(),
+                    },
                 }
                 torch.save(content, os.path.join(checkpoint_dir, "content.pth"))
 
@@ -518,9 +586,13 @@ def main(args):
                 eval_pbar = tqdm(range(iterations), disable=(rank != 0))
                 total = 0
                 p = Path(experiment_dir) / f"fid{args.eval_nsamples}_epoch{epoch}_step{current_step}"
-                # if p.exists() and rank == 0:
-                #     shutil.rmtree(p.as_posix())
-                p.mkdir(exist_ok=True, parents=True)
+                
+                dist.barrier()
+                if rank == 0:
+                    if p.exists():
+                        shutil.rmtree(p.as_posix())
+                    p.mkdir(exist_ok=True, parents=True)
+                dist.barrier()
                 model.eval()
 
                 use_cfg_eval = use_label and (args.cfg_scale > 1.0)
