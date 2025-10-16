@@ -3,7 +3,6 @@ export CUDA_VISIBLE_DEVICES=0
 
 # to start a brand new run 
 # rm -rf run_state/$EXP
-# rm -rf results/"$EXP"/
 # comment out --resume flag
 EXP="logtest"
 STATE_DIR="run_state/${EXP}"
@@ -54,7 +53,7 @@ torchrun --standalone --nproc_per_node=1 ../Arcee/train_grad_acc.py --exp $EXP -
   --rms-norm \
   --fused-add-norm \
   --drop-path 0.0 \
-  --save-content-every 50 \
+  --save-content-every 500 \
   --grad-accum-steps $GRAD_ACCUM_STEPS \
   --use-wandb \
-  --resume \
+  #--resume \
