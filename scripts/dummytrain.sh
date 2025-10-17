@@ -5,7 +5,7 @@ export CUDA_VISIBLE_DEVICES=0
 # rm -rf run_state/$EXP
 # rm -rf results/"$EXP"/
 # comment out --resume flag
-EXP="checking-errors"
+EXP="eval_dummy"
 STATE_DIR="run_state/${EXP}"
 RUN_ID_FILE="${STATE_DIR}/wandb_run_id.txt"
 mkdir -p "${STATE_DIR}"
@@ -36,14 +36,14 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train.py --exp $EXP --
   --image-size 256 \
   --num-classes 1 \
   --block-type normal \
-  --model Arcee-B/2 \
+  --model Arcee-XS/2 \
   --scan-type Arcee_8 \
   --ssm-dstate 256 \
   --train-steps 60000 \
   --eval-every 5000 \
   --plot-every 500 \
-  --ckpt-every 10000 \
-  --log-every 5 \
+  --ckpt-every 10 \
+  --log-every 1 \
   --global-batch-size $GLOBAL_BATCH_SIZE \
   --sample-bs $BATCH_SIZE \
   --eval-bs $EVAL_BS \
@@ -54,6 +54,6 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train.py --exp $EXP --
   --rms-norm \
   --fused-add-norm \
   --drop-path 0.0 \
-  --save-content-every 10000 \
-  --use-wandb \
+  --save-content-every 5 \
+  #--use-wandb \
   #--resume \
