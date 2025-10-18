@@ -28,6 +28,9 @@ PY
   export WANDB_RESUME="allow"
 fi
 
+export WANDB_RUN_ID="orfn9a7n"
+export WANDB_RESUME="must"
+
 NUM_GPUS=2
 BATCH_SIZE=96
 EVAL_BS=32

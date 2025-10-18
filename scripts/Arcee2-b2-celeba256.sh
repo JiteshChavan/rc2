@@ -28,6 +28,10 @@ PY
   export WANDB_RESUME="allow"
 fi
 
+
+export WANDB_RUN_ID="w29w74qd"
+export WANDB_RESUME="must"
+
 NUM_GPUS=2
 BATCH_SIZE=96
 EVAL_BS=32

@@ -82,20 +82,7 @@ def get_step_from_ckpt_path(ckpt_path):
     return int(m.group(1))
 
 
-def eval_fid(model, ref_dir, eval_bs, eval_nsamples, world_size, rank, eval_dir, step):
-    if ref_dir.exists():
-        global_batch_size = eval_bs * world_size
-        total_samples = int (math.ceil(args.eval_nsamples / global_batch_size) * global_batch_size)
-        samples_needed_this_gpu = int(total_samples // world_size)
-        iterations = int (samples_needed_this_gpu // eval_bs)
-        eval_pbar = tqdm(range(iterations, disable=(rank != 0)))
-        total = 0
-        p = Path(eval_dir) / f"fid{eval_nsamples}_step{step}"
-
-        dist.barrier()
-        
-
-
+    
 def main(args):
     assert torch.cuda.is_available(), "Eval currently requires at least one GPU."
     dist.init_process_group("nccl")
@@ -144,7 +131,8 @@ def main(args):
     latent_size = args.image_size // 8
     model = create_model(args) # Models[args.model](args)
 
-    model = DDP(model.to(device), device_ids=[rank], find_unused_parameters=False)
+    # will this work on multi gpu single node ?
+    model = model.to(device)
     model.eval()
 
     flow = create_transport(
@@ -167,6 +155,14 @@ def main(args):
 
     logger.info(f"Model : {args.model}, parameter count : {sum(p.numel() for p in model.parameters()):,}")
 
+    ref_dir = args.eval_refdir
+    eval_bs = args.eval_bs
+    eval_nsamples = args.eval_nsamples
+    latent_res = args.image_size // 8
+    use_label = args.num_classes > 1
+    use_cfg = use_label and (args.cfg_scale > 1.0)
+    num_classes = args.num_classes
+    cfg_scale = args.cfg_scale
     for ckpt_file in checkpoints:
 
         dist.barrier()
@@ -178,6 +174,74 @@ def main(args):
         del ckpt
         torch.cuda.synchronize()
         logger.info(f"Checkpoint {step} loaded successfully")
+
+
+
+
+        # maybe try to eval real stats just once that would save time?
+        assert os.path.exists(ref_dir)
+        global_batch_size = eval_bs * world_size
+        total_samples = int (math.ceil(eval_nsamples / global_batch_size) * global_batch_size)
+        samples_needed_this_gpu = int(total_samples // world_size)
+        iterations = int (samples_needed_this_gpu // eval_bs)
+        eval_pbar = tqdm(range(iterations, disable=(rank != 0)))
+        total = 0
+        p = Path(eval_dir) / f"fid{eval_nsamples}_step{step}"
+    
+        dist.barrier()
+        if rank == 0:
+            if p.exists():
+                shutil.rmtree(p.as_posix())
+            p.mkdir(exist_ok=True, parents=True)
+        dist.barrier()
+    
+        for _ in eval_pbar:
+            # x0
+            z = torch.randn(eval_bs, 4, latent_res, latent_res, device=device)
+            if use_label:
+                y = torch.randint(num_classes-1, size=(eval_bs), dtype=torch.long, device=device) # sample [,) num classes = 2 sample 0 and 1 0 is null class
+                if use_cfg:
+                    z = torch.cat([z, z], dim=0)
+                    y_null = torch.tensor([num_classes - 1] * eval_bs, dtype=torch.long, device=device)
+                    y = torch.cat([y, y_null], dim=0)
+                    sample_model_kwargs = dict(y=y, cfg_scale=cfg_scale)
+                    model_fn = model.forward_with_cfg
+                else:
+                    sample_model_kwargs = dict(y=y) #no cfg scale
+                    model_fn = model.forward
+            else:
+                y = None
+                sample_model_kwargs = dict(y=y)
+                model_fn = model.forward
+            
+            # inference
+            with torch.no_grad():
+                sample_fn = flow_sampler.sample_ode() # vectorfield ODE sampling (continuity equation)
+                samples = sample_fn(z, model_fn, **sample_model_kwargs)[-1]
+            
+            if use_cfg:
+                samples, null_samples = samples.chunk(2, dim=0) # discarrd null samples
+            
+            del null_samples, z, y
+            samples = vae.decode(samples / 0.18215).sample
+            samples = (
+                torch.clamp(127.5 * samples + 128.0, 0, 255)
+                .permute(0, 2, 3, 1)
+                .to("cpu", dtype=torch.uint8)
+                .numpy()
+            )
+
+            for i, sample in enumerate(samples):
+                index = i * world_size + rank + total
+                if index >= eval_nsamples:
+                    break
+                image_path = p / f"{index:06d}.png"
+                Image.fromarray(sample).save(image_path.as_posix())
+            total += global_batch_size
+            del samples
+        torch.cuda.empty_cache()
+        gc.collect()
+
      
 
     cleanup()

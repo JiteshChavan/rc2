@@ -582,7 +582,7 @@ def main(args):
                     # Sample inputs:
                     z = torch.randn(n, 4, latent_size, latent_size, device=device)
                     if use_label:
-                        y = torch.randint(args.num_classes-1, size=(n,), dtype=torch.long, device=device) # (, ] sampling
+                        y = torch.randint(args.num_classes-1, size=(n,), dtype=torch.long, device=device) # [, ) sampling
                         if use_cfg_eval:
                             z = torch.cat([z, z], dim=0)
                             y_null = torch.tensor([args.num_classes-1] * n, dtype=torch.long, device=device)
@@ -631,7 +631,7 @@ def main(args):
                         pp = p / f"{index:06d}.jpg"
                         Image.fromarray(sample).save(pp.as_posix())
                     total += global_batch_size
-                del z, y, sample_fn, samples  
+                    del z, y, sample_fn, samples  
                 torch.cuda.empty_cache()
                 gc.collect()
                 model.train()
