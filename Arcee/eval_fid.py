@@ -11,7 +11,6 @@ from pathlib import Path
 
 import argparse
 import logging
-import os
 from collections import OrderedDict
 from copy import deepcopy
 from time import time
@@ -107,18 +106,20 @@ def main(args):
     random.seed(seed)
 
     # setup directory for eval
-    exp_path = f"results/{args.exp}" # target checkpoints for fid eval
+    exp_path = args.exp # target checkpoints for fid eval
     assert os.path.exists(exp_path), f"target experiment directory doesnt exist : {exp_path} is invalid"
     checkpoint_directory = f"{exp_path}/checkpoints"
     checkpoints = list_checkpoints(checkpoint_directory)
     dist.barrier()
 
 
-    eval_index = args.exp # directory to save eval_results
+    eval_index = os.path.basename(os.path.normpath(args.exp))
     eval_dir = f"{args.eval_results_dir}/{eval_index}"
     sample_dir = f"{args.eval_results_dir}/samples"
     
     if rank == 0:
+        assert 1 <= len(args.eval_metrics) <= 2, f"Invalid eval_metrics specified, the script only supports FID, KID eval"
+
         os.makedirs(args.eval_results_dir, exist_ok=True)
         os.makedirs(eval_dir, exist_ok=True)
         os.makedirs(sample_dir, exist_ok=True)
@@ -126,13 +127,11 @@ def main(args):
         logger = create_logger(eval_dir)
         logger.info(f"Eval directory created at {eval_dir}")
         logger.info(f"Found {len(checkpoints)} checkpoints.")
-        for ckpt in checkpoints:
-            logger.info(ckpt)
-
+        
         mode = "disabled"
         if args.use_wandb:
             mode = "online"
-        wandb.init(project="Arcee", entity="red-blue-violet", config=vars(args), name=eval_index, mode=mode)
+        wandb.init(project="Arcee", entity="red-blue-violet", config=vars(args), name=f"eval_{eval_index}", mode=mode)
     else:
         logger = create_logger(None)
     dist.barrier()
@@ -143,6 +142,7 @@ def main(args):
         assert os.path.exists(args.datadir)
         # check if real_stats file exists or not: id like to keep it ias real_stats_dir/real_stats.npz
         real_stats_path = os.path.join(args.datadir, "real_stats.npz")
+        real_kid_stats_path = os.path.join(args.datadir, "real_kid_stats.npz")
         if not os.path.exists(real_stats_path):
             assert os.path.exists(args.eval_refdir), f"--eval-refdir doesnt exist"
 
@@ -153,7 +153,7 @@ def main(args):
                     args.eval_refdir,
                     mode="clean",
                     num_workers=args.num_workers,
-                    device=device_str,
+                    device=torch.device(device_str),
                     verbose=True,
                     batch_size=args.fid_batch_size,
                 )
@@ -162,12 +162,19 @@ def main(args):
             # copy the cached .npz into datadir
             cache_dir = os.path.join(os.path.dirname(cleanfid.__file__), "stats")
             assert fid.test_stats_exists(stats_name, mode="clean", metric="FID")
+            assert fid.test_stats_exists(stats_name, mode="clean", metric="KID")
             # equivalet to
             source = os.path.join(cache_dir, f"{stats_name}_clean_custom_na.npz")
             assert os.path.exists(source), f"CleanFID built stats but not found at : {source}"
             shutil.copy2(source, real_stats_path)
-            logger.info(f"[real_stats] copied -> {real_stats_path}")
-        logger.info(f"Real_stats available at : {real_stats_path}")
+            logger.info(f"FID stats copied -> {real_stats_path}")
+            
+            source = os.path.join(cache_dir, f"{stats_name}_clean_custom_na_kid.npz")
+            assert os.path.exists(source), f"CleanFID built stats but not found at : {source}"
+            shutil.copy2(source, real_kid_stats_path)
+            logger.info(f"KID stats copied -> {real_kid_stats_path}")
+
+        logger.info(f"Real_stats available at : {args.datadir}")
     
     dist.barrier()
 
@@ -231,7 +238,7 @@ def main(args):
         iterations = int (samples_needed_this_gpu // eval_bs)
         eval_pbar = tqdm(range(iterations), disable=(rank != 0))
         total = 0
-        generated_samples_path = Path(eval_dir) / f"fid{eval_nsamples}_step{step}"
+        generated_samples_path = Path(eval_dir) / f"Samples_{eval_nsamples}_step{step}"
     
         dist.barrier()
         if rank == 0:
@@ -289,24 +296,41 @@ def main(args):
         torch.cuda.synchronize()
         torch.cuda.empty_cache()
         gc.collect()
-
+        dist.barrier()
         # calculate stats for generated images for this particular checkpoint
         if rank == 0:
-            logger.info (f"Calculating FID{args.eval_nsamples} for {args.model_type} checkpoint_{step}.....")
-            assert fid.test_stats_exists(stats_name, mode="clean", metric="FID"), f"specified real stats : {stats_name} are invalid"
-            score = fid.compute_fid(
-                generated_samples_path.as_posix(),
-                dataset_name=stats_name,            # the REAL stats name you built earlier
-                dataset_split="custom",
-                dataset_res=args.image_size,
-                mode="clean",
-                num_workers=args.num_workers,
-                device=device_str,
-                verbose=True,
-                batch_size=args.fid_batch_size,
-            )
-            wandb.log({"FID10k" : score}, step=step, commit=True)
-            logger.info(f"FID10k:{score}")
+            for i, metric in enumerate(args.eval_metrics):
+                metric_key = f"{metric}{args.eval_nsamples // 1000}K"
+                logger.info (f"Calculating {metric_key} for {args.model_type} checkpoint_{step}.....")
+                assert fid.test_stats_exists(stats_name, mode="clean", metric=metric), f"specified real stats : {stats_name} are invalid"
+
+                if metric == "FID":
+                    score = fid.compute_fid(
+                        generated_samples_path.as_posix(),
+                        dataset_name=stats_name,            # the REAL stats name you built earlier
+                        dataset_split="custom",
+                        dataset_res=args.image_size,
+                        mode="clean",
+                        num_workers=args.num_workers,
+                        device=torch.device(device_str),
+                        verbose=True,
+                        batch_size=args.fid_batch_size,
+                    )
+                elif metric == "KID":
+                    score = fid.compute_kid(
+                        generated_samples_path.as_posix(),
+                        dataset_name=stats_name,
+                        dataset_split="custom",
+                        dataset_res=args.image_size,
+                        mode="clean",
+                        num_workers=args.num_workers,
+                        device=torch.device(device_str),
+                        verbose=True,
+                        batch_size=args.kid_batch_size,
+                        
+                    )
+                wandb.log({f"{metric_key}" : score}, step=step, commit= (i == len(args.eval_metrics) - 1))
+                logger.info(f"{metric_key} : {score}")
         dist.barrier()
 
 
@@ -373,11 +397,11 @@ if __name__ == "__main__":
     # EVAL
     group = parser.add_argument_group("Eval")
     group.add_argument("--eval-refdir", type=str, required=True)
-    group.add_argument("--eval-metric", type=str, required=True, choices=["FID", "KID"])
+    group.add_argument("--eval-metrics", type=str, nargs="+", required=True, choices=["FID", "KID"], help="space separated metrics --eval-metrics FID KID")
     group.add_argument("--eval-nsamples", type=int, default=10000)
     group.add_argument("--eval-bs", type=int, default=4) # NOTE: eval batch size for fid calc (per GPU)
     group.add_argument("--fid-batch-size", type=int, default=32) # NOTE: batch size for fid calc through the feature extractor inceptionV3 model
-    
+    group.add_argument("--kid-batch-size", type=int, default=32)
 
     # Flow Matching 
     group = parser.add_argument_group("Transport arguments")

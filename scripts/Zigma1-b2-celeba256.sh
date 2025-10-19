@@ -33,11 +33,11 @@ EVAL_BS=40
 GLOBAL_BATCH_SIZE=$((BATCH_SIZE * NUM_GPUS))
 
 torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train.py --exp $EXP --datadir ../data_prep/celeba256/ --dataset celeba_256 --eval-refdir ../data_prep/celeba256/real_samples \
+  --scan-type Zigma_1 \
+  --model Zigma-B/2 \
   --image-size 256 \
   --num-classes 1 \
   --block-type normal \
-  --model Zigma-B/2 \
-  --scan-type Zigma_1 \
   --ssm-dstate 256 \
   --train-steps 60000 \
   --eval-every 5000 \
