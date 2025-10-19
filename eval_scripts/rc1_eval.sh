@@ -6,6 +6,7 @@ EXP="Arcee-1-B-2-celeba256"
 NUM_GPUS=2
 EVAL_BS=128 # per GPU
 FID_BS=128 # for inceptionV3 feature extraction model forward pass
+EVAL_SAMPLES=10000
 
 
 torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/eval_fid.py --exp $EXP  --datadir ../data_prep/celeba256/ --dataset celeba_256 --eval-refdir ../data_prep/celeba256/real_samples \
@@ -13,7 +14,7 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/eval_fid.py --exp $EXP
   --scan-type Arcee_1 \
   --model-type ema \
   --eval-metric FID\
-  --eval-nsamples 10000 \
+  --eval-nsamples $EVAL_SAMPLES \
   --block-type normal \
   --image-size 256 \
   --num-classes 1 \
@@ -25,5 +26,5 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/eval_fid.py --exp $EXP
   --rms-norm \
   --fused-add-norm \
   --drop-path 0.0 \
-  --use-wandb \
+  --use-wandb 
   
