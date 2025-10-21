@@ -4,11 +4,11 @@ export CUDA_VISIBLE_DEVICES=0
 
 EXP="eval_dummy"
 NUM_GPUS=1
-EVAL_BS=2
+EVAL_BS=4
 FID_BS=40
 EVAL_SAMPLES=40
 
-torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/eval_fid.py --exp ../scripts/results/${EXP} --dataset celeba_256 --datadir ../data/celeba256/ --eval-refdir ../data/celeba256/real_samples \
+torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/eval_fid.py --exp ../scripts/results/${EXP} --dataset ffhq_1024 --datadir ../data_prep/ffhq1024/ --eval-refdir ../data_prep/ffhq1024/real_samples \
   --model-type ema \
   --eval-metrics KID FID\
   --model Arcee-XS/2 \
@@ -26,5 +26,5 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/eval_fid.py --exp ../s
   --rms-norm \
   --fused-add-norm \
   --drop-path 0.0 \
-  --use-wandb
+  #--use-wandb
   

@@ -6,25 +6,6 @@ export CUDA_VISIBLE_DEVICES=0
 # rm -rf results/"$EXP"/
 # comment out --resume flag
 EXP="eval_dummy"
-STATE_DIR="run_state/${EXP}"
-RUN_ID_FILE="${STATE_DIR}/wandb_run_id.txt"
-mkdir -p "${STATE_DIR}"
-# Resume if we already have a saved run
-if [[ -f "${RUN_ID_FILE}" ]]; then
-  export WANDB_RUN_ID="$(
-  <"$RUN_ID_FILE"
-  )"
-  export WANDB_RESUME="must"
-else
-  export WANDB_RUN_ID="$(
-python - <<'PY'
-from wandb.util import generate_id
-print(generate_id())
-PY
-)"
-  echo "$WANDB_RUN_ID" > "${RUN_ID_FILE}"
-  export WANDB_RESUME="allow"
-fi
 
 NUM_GPUS=1
 BATCH_SIZE=8
@@ -57,3 +38,4 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train.py --exp $EXP --
   --save-content-every 5 \
   #--use-wandb \
   #--resume \
+  # REMEMBER TO EXPORT RUNID FROM wandb url to resume

@@ -1,32 +1,13 @@
 export WANDB_API_KEY='2f92f218fe46708930c460c6f57055ac6ce1361c'
-export CUDA_VISIBLE_DEVICES=4
+export CUDA_VISIBLE_DEVICES=0,1
 
-# to start a brand new run 
-# rm -rf run_state/$EXP
-# rm -rf results/"$EXP"/
-# comment out --resume flag
+
+# REMEMBER TO EXPORT RUNID FROM wandb url to resume
+#export WANDB_RUN_ID="PASTE_ID_HERE"
+#export WANDB_RESUME="must"
 EXP="Arcee-1-B-2-celeba256"
-STATE_DIR="run_state/${EXP}"
-RUN_ID_FILE="${STATE_DIR}/wandb_run_id.txt"
-mkdir -p "${STATE_DIR}"
-# Resume if we already have a saved run
-if [[ -f "${RUN_ID_FILE}" ]]; then
-  export WANDB_RUN_ID="$(
-  <"$RUN_ID_FILE"
-  )"
-  export WANDB_RESUME="must"
-else
-  export WANDB_RUN_ID="$(
-python - <<'PY'
-from wandb.util import generate_id
-print(generate_id())
-PY
-)"
-  echo "$WANDB_RUN_ID" > "${RUN_ID_FILE}"
-  export WANDB_RESUME="allow"
-fi
 
-NUM_GPUS=1
+NUM_GPUS=2
 BATCH_SIZE=96
 EVAL_BS=40
 
@@ -39,8 +20,7 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train.py --exp $EXP  -
   --model Arcee-B/2 \
   --scan-type Arcee_1 \
   --ssm-dstate 256 \
-  --train-steps 60000 \
-  --eval-every 5000 \
+  --train-steps 50050 \
   --plot-every 500 \
   --ckpt-every 10000 \
   --log-every 5 \
@@ -55,5 +35,8 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train.py --exp $EXP  -
   --fused-add-norm \
   --drop-path 0.0 \
   --save-content-every 5000 \
-  --use-wandb \
+  --eval-every 500000000 \
+  --use-wandb "offline"\                     
   #--resume \
+
+  
