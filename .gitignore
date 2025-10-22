@@ -4,4 +4,4 @@ data_prep/*/train.lmdb/
 scripts/wandb/
 scripts/results/
 **/*.so
-data_prep/ffhq1024/*
+
