@@ -1,5 +1,5 @@
 use_ema_for_eval = False
-use_ema_for_samples = False
+use_ema_for_samples = True
 # utils
 import shutil
 import random
@@ -512,7 +512,7 @@ def main(args):
             # dist.barrier()
 
         if rank == 0 and current_step % args.plot_every == 0:
-            logger.info(f"Generating base model samples...")
+            logger.info(f"Generating ema model samples...")
             model.eval()
             with torch.no_grad():
                 #zs = torch.randn(sample_bs, 4, latent_size, latent_size, device=device)

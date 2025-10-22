@@ -2,6 +2,9 @@
 1. download FFHQ: cd data_prep/ffhq1024 -> python download.py (you will see 70k~ images in real_samples folder after done) -> python convert.py (there should be train.lmdb in same directory after)
 2. resume zigma8 online node (it has crashed): cd scripts -> bash Zigma8-b2-celeba256.sh (thats it)
 3. run eval for zigma 4 (online node) : cd eval_scripts -> bash z8_eval.sh
+4. run these experiments again (checkpoints are mising) : cd scripts -> bash Arcee1-b2-celeba256.sh, bash Zigma1-b2-celeba256.sh,  bash zigma2-b2-celeba256.sh
+5. run ffhq experiments as : cd ffhq_scripts -> bash rc4.sh bash z4.sh (note try more GPUs if possible ive written script for 8 GPUs per experiment, compute requirements blow up at 1024x1024 resolution)
+(unsure which models to pick for 1024 1024 parity comparison because we dont have FIDs on 256 yet)
 
 ### Running Eval
 - git pull origin debug

@@ -1,15 +1,15 @@
 export WANDB_API_KEY='2f92f218fe46708930c460c6f57055ac6ce1361c'
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 
 # REMEMBER TO EXPORT RUNID FROM wandb url to resume
 #export WANDB_RUN_ID="PASTE_ID_HERE"
 #export WANDB_RESUME="must"
-EXP="Arcee-1-B-2-celeba256"
-WANDB="offline"
-NUM_GPUS=1
-BATCH_SIZE=2
-EVAL_BS=1
+EXP="Arcee4-B2-ffhq1024"
+WANDB="online"
+NUM_GPUS=8
+BATCH_SIZE=32
+EVAL_BS=32
 
 GLOBAL_BATCH_SIZE=$((BATCH_SIZE * NUM_GPUS))
 
@@ -17,8 +17,8 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train.py --exp $EXP  -
   --image-size 1024 \
   --num-classes 1 \
   --block-type normal \
-  --model Arcee-XS/2 \
-  --scan-type Arcee_1 \
+  --model Arcee-B/2 \
+  --scan-type Arcee_4 \
   --ssm-dstate 256 \
   --train-steps 50050 \
   --plot-every 500 \
@@ -37,4 +37,5 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train.py --exp $EXP  -
   --save-content-every 5000 \
   --eval-every 500000000 \
   --use-wandb $WANDB\
-  #--resume  
+  #--resume
+  
