@@ -40,9 +40,9 @@ def create_image_lmdb(image_dir, lmdb_path, commit_interval=2000, key_width=6):
         try:
             with open(p, "rb") as f:
                 data = f.read()
-            key = f"{idx:0{key_width}d}".encode("ascii") 
+            key = str(idx).encode("ascii")
             txn.put(key, data)
-            key_lines.append(f"{idx:0{key_width}d}\t{os.path.basename(p)}")
+            key_lines.append(f"{idx}\t{os.path.basename(p)}")
             kept += 1
             if (idx + 1) % commit_interval == 0:
                 txn.commit(); txn = env.begin(write=True)
