@@ -7,10 +7,9 @@ WANDB="offline"
 # REMEMBER TO EXPORT RUNID FROM wandb url to resume
 #export WANDB_RUN_ID="PASTE_ID_HERE"
 #export WANDB_RESUME="must"
-EXP="Arcee4-B2-ffhq1024"
+EXP="Zigma8-B2-ffhq1024"
 BATCH_SIZE=32
 EVAL_BS=32
-
 
 # important num_gpus should be nodes * gpu_per_node = total gpus
 NUM_GPUS=8
@@ -19,13 +18,12 @@ GPUS_PER_NODE=$((NUM_GPUS / NODES))
 
 GLOBAL_BATCH_SIZE=$((BATCH_SIZE * NUM_GPUS))
 
-
 torchrun --nnodes=$NODES --nproc_per_node=$GPUS_PER_NODE ../Arcee/train.py --exp $EXP  --datadir ../data_prep/ffhq1024/ --dataset ffhq_1024 --eval-refdir ../data_prep/ffhq1024/real_samples \
   --image-size 1024 \
   --num-classes 1 \
   --block-type normal \
-  --model Arcee-B/2 \
-  --scan-type Arcee_4 \
+  --model Zigma-B/2 \
+  --scan-type Zigma_8 \
   --ssm-dstate 256 \
   --train-steps 50050 \
   --plot-every 1000 \

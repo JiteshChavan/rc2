@@ -142,13 +142,8 @@ def main(args):
     """
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
 
-    # Setup DDP:
+    
     dist.init_process_group("nccl")
-    # if "SLURM_PROCID" in os.environ:
-    #     rank = int(os.environ["SLURM_PROCID"])
-    #     gpu = rank % torch.cuda.device_count()
-    #     world_size = int(os.environ["WORLD_SIZE"], 1)
-    # else:
     rank = dist.get_rank()
     device = rank % torch.cuda.device_count()
     world_size = dist.get_world_size()
@@ -190,7 +185,7 @@ def main(args):
     
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
-    model = DDP(model.to(device), device_ids=[rank], find_unused_parameters=False)
+    model = DDP(model.to(device), device_ids=[device], output_device=device, find_unused_parameters=False)
     #if rank == 0:
     #    wandb.watch(model.module if hasattr(model, "module") else model, log="all")
 
@@ -721,7 +716,7 @@ if __name__ == "__main__":
     # RESUME TRAINING
     parser.add_argument("--model-ckpt", type=str, default="")
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--use-wandb", type=str, required=True, choices=["online", "offline", "disabled"])
+    parser.add_argument("--use-wandb", type=str, default="offline", choices=["online", "offline", "disabled"])
         
     
 

@@ -10,10 +10,11 @@ EXP="eval_dummy"
 NUM_GPUS=1
 BATCH_SIZE=8
 EVAL_BS=4
+WANDB=disabled
 
 GLOBAL_BATCH_SIZE=$((BATCH_SIZE * NUM_GPUS))
 
-torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train.py --exp $EXP --datadir ../data/celeba256 --dataset celeba_256 --eval-refdir ../data/celeba256/real_samples \
+torchrun --nnodes=1 --nproc_per_node=$NUM_GPUS ../Arcee/train.py --exp $EXP --datadir ../data/celeba256 --dataset celeba_256 --eval-refdir ../data/celeba256/real_samples \
   --image-size 256 \
   --num-classes 1 \
   --block-type normal \
@@ -36,6 +37,6 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train.py --exp $EXP --
   --fused-add-norm \
   --drop-path 0.0 \
   --save-content-every 5 \
-  #--use-wandb \
+  --use-wandb $WANDB\
   #--resume \
   # REMEMBER TO EXPORT RUNID FROM wandb url to resume

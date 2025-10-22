@@ -7,7 +7,7 @@ WANDB="offline"
 # REMEMBER TO EXPORT RUNID FROM wandb url to resume
 #export WANDB_RUN_ID="PASTE_ID_HERE"
 #export WANDB_RESUME="must"
-EXP="Arcee4-B2-ffhq1024"
+EXP="Arcee8-B2-ffhq1024"
 BATCH_SIZE=32
 EVAL_BS=32
 
@@ -25,7 +25,7 @@ torchrun --nnodes=$NODES --nproc_per_node=$GPUS_PER_NODE ../Arcee/train.py --exp
   --num-classes 1 \
   --block-type normal \
   --model Arcee-B/2 \
-  --scan-type Arcee_4 \
+  --scan-type Arcee_8 \
   --ssm-dstate 256 \
   --train-steps 50050 \
   --plot-every 1000 \
