@@ -21,7 +21,7 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train.py --exp $EXP  -
   --scan-type Arcee_4 \
   --ssm-dstate 256 \
   --train-steps 50050 \
-  --plot-every 500 \
+  --plot-every 1000 \
   --ckpt-every 10000 \
   --log-every 1 \
   --global-batch-size $GLOBAL_BATCH_SIZE \
