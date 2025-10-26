@@ -9,7 +9,7 @@ FID_BS=256 # for inceptionV3 feature extraction model forward pass, can be much 
 EVAL_SAMPLES=50000
 
 
-torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/eval_fid.py --exp ../scripts/results/${EXP}  --datadir ../data_prep/celeba256/ --dataset celeba_256 --eval-refdir ../data_prep/celeba256/real_samples \
+torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/fid50k.py --exp ../scripts/results/${EXP}  --datadir ../data_prep/celeba256/ --dataset celeba_256 --eval-refdir ../data_prep/celeba256/real_samples \
   --scan-type Arcee_8 \
   --model Arcee-B/2 \
   --model-type ema \
