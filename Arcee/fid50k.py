@@ -131,7 +131,7 @@ def main(args):
         mode = "disabled"
         if args.use_wandb:
             mode = "online"
-        wandb.init(project="Arcee", entity="red-blue-violet", config=vars(args), name=f"eval_{eval_index}", mode=mode)
+        wandb.init(project="Arcee", entity="red-blue-violet", config=vars(args), name=f"fid50k_{eval_index}", mode=mode)
     else:
         logger = create_logger(None)
     dist.barrier()
@@ -224,6 +224,8 @@ def main(args):
         logger.info(f"{ckpt_file}: Starting {args.model_type} eval ...")
         
         step = get_step_from_ckpt_path(ckpt_file)
+        generated_samples_path = Path(eval_dir) / f"Samples_{eval_nsamples}_step{step}"
+        
         if step == 50000:
             ckpt = torch.load(ckpt_file, map_location=torch.device(f"cuda:{device}"), weights_only=False)
             model.module.load_state_dict(ckpt[args.model_type], strict=True)
@@ -239,7 +241,6 @@ def main(args):
             iterations = int (samples_needed_this_gpu // eval_bs)
             eval_pbar = tqdm(range(iterations), disable=(rank != 0))
             total = 0
-            generated_samples_path = Path(eval_dir) / f"Samples_{eval_nsamples}_step{step}"
         
             dist.barrier()
             if rank == 0:
@@ -294,45 +295,45 @@ def main(args):
                     Image.fromarray(sample, mode="RGB").save(image_path.as_posix())
                 total += samples_per_iter * world_size
                 del samples
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        gc.collect()
-        dist.barrier()
-        # calculate stats for generated images for this particular checkpoint
-        if rank == 0:
-            for i, metric in enumerate(args.eval_metrics):
-                metric_key = f"{metric}{args.eval_nsamples // 1000}K"
-                logger.info (f"Calculating {metric_key} for {args.model_type} checkpoint_{step}.....")
-                assert fid.test_stats_exists(stats_name, mode="clean", metric=metric), f"specified real stats : {stats_name} are invalid"
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            gc.collect()
+            dist.barrier()
+            # calculate stats for generated images for this particular checkpoint
+            if rank == 0:
+                for i, metric in enumerate(args.eval_metrics):
+                    metric_key = f"{metric}{args.eval_nsamples // 1000}K"
+                    logger.info (f"Calculating {metric_key} for {args.model_type} checkpoint_{step}.....")
+                    assert fid.test_stats_exists(stats_name, mode="clean", metric=metric), f"specified real stats : {stats_name} are invalid"
 
-                if metric == "FID":
-                    score = fid.compute_fid(
-                        generated_samples_path.as_posix(),
-                        dataset_name=stats_name,            # the REAL stats name you built earlier
-                        dataset_split="custom",
-                        dataset_res=args.image_size,
-                        mode="clean",
-                        num_workers=args.num_workers,
-                        device=torch.device(device_str),
-                        verbose=True,
-                        batch_size=args.fid_batch_size,
-                    )
-                elif metric == "KID":
-                    score = fid.compute_kid(
-                        generated_samples_path.as_posix(),
-                        dataset_name=stats_name,
-                        dataset_split="custom",
-                        dataset_res=args.image_size,
-                        mode="clean",
-                        num_workers=args.num_workers,
-                        device=torch.device(device_str),
-                        verbose=True,
-                        batch_size=args.kid_batch_size,
-                        
-                    )
-                wandb.log({f"{metric_key}" : score}, step=step, commit= (i == len(args.eval_metrics) - 1))
-                logger.info(f"{metric_key} : {score}")
-        dist.barrier()
+                    if metric == "FID":
+                        score = fid.compute_fid(
+                            generated_samples_path.as_posix(),
+                            dataset_name=stats_name,            # the REAL stats name you built earlier
+                            dataset_split="custom",
+                            dataset_res=args.image_size,
+                            mode="clean",
+                            num_workers=args.num_workers,
+                            device=torch.device(device_str),
+                            verbose=True,
+                            batch_size=args.fid_batch_size,
+                        )
+                    elif metric == "KID":
+                        score = fid.compute_kid(
+                            generated_samples_path.as_posix(),
+                            dataset_name=stats_name,
+                            dataset_split="custom",
+                            dataset_res=args.image_size,
+                            mode="clean",
+                            num_workers=args.num_workers,
+                            device=torch.device(device_str),
+                            verbose=True,
+                            batch_size=args.kid_batch_size,
+                            
+                        )
+                    wandb.log({f"{metric_key}" : score}, step=step, commit= (i == len(args.eval_metrics) - 1))
+                    logger.info(f"{metric_key} : {score}")
+            dist.barrier()
 
 
     cleanup()

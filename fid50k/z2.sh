@@ -1,9 +1,7 @@
 export WANDB_API_KEY='2f92f218fe46708930c460c6f57055ac6ce1361c'
-export CUDA_VISIBLE_DEVICES=0,1
-
 
 EXP="Zigma2-B2-celeba256"
-NUM_GPUS=2
+NUM_GPUS=1
 EVAL_BS=40 # per GPU
 FID_BS=256 # for inceptionV3 feature extraction model forward pass, can be much higher than backbone
 EVAL_SAMPLES=50000
