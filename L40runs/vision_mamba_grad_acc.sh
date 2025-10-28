@@ -18,7 +18,7 @@ EVAL_BS=32
 
 GLOBAL_BATCH_SIZE=$((BATCH_SIZE * NUM_GPUS))
 
-torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train_grad_acc.py --exp $EXP  --datadir ../data/celeba256/ --dataset celeba_256 --eval-refdir ../data/celeba256/real_samples \
+torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train_grad_acc.py --exp $EXP  --datadir ../data_prep/celeba256/ --dataset celeba_256 --eval-refdir ../data_prep/celeba256/real_samples \
   --image-size 256 \
   --num-classes 1 \
   --block-type normal \
