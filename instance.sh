@@ -1,5 +1,5 @@
-SCAN_TYPE="Zigma_2"
-MODEL="Zigma-B/2"
+SCAN_TYPE="V2RC"
+MODEL="ArceeVim-B/2"
 
 python Arcee/instance.py \
     --exp instantiation \

@@ -9,27 +9,27 @@ WANDB="online"
 
 
 
-export CUDA_VISIBLE_DEVICES=0
-NUM_GPUS=1
-BATCH_SIZE=4
-GRAD_ACC_STEPS=3
-EVAL_BS=3
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+NUM_GPUS=4
+BATCH_SIZE=24
+GRAD_ACC_STEPS=2
+EVAL_BS=32
 
 
 GLOBAL_BATCH_SIZE=$((BATCH_SIZE * NUM_GPUS))
 
-torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train_grad_acc.py --exp $EXP  --datadir ../data/celeba256/ --dataset celeba_256 --eval-refdir ../data/celeba256/real_samples \
+torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train_grad_acc.py --exp $EXP  --datadir ../data_prep/celeba256/ --dataset celeba_256 --eval-refdir ../data_prep/celeba256/real_samples \
   --image-size 256 \
   --num-classes 1 \
   --block-type normal \
   --model $MODEL \
   --scan-type $SCAN_TYPE \
   --ssm-dstate 256 \
+  --grad-accum-steps $GRAD_ACC_STEPS\
   --train-steps 50050 \
   --plot-every 500 \
   --ckpt-every 10000 \
   --log-every 5 \
-  --grad-accum-steps $GRAD_ACC_STEPS\
   --global-batch-size $GLOBAL_BATCH_SIZE \
   --sample-bs $BATCH_SIZE \
   --eval-bs $EVAL_BS \
@@ -41,7 +41,7 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train_grad_acc.py --ex
   --fused-add-norm \
   --drop-path 0.0 \
   --save-content-every 5000 \
-  --eval-every 10000 \
+  --eval-every 100000000 \
   --use-wandb $WANDB
   #--resume
 

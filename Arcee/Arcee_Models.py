@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mamba_ssm.modules.mamba_simple import ArceeMamba, Mamba
+from mamba_ssm.modules.mamba_simple import ArceeMamba, Mamba, ArceeVisionMamba
 from pe.cpe import AdaInPosCNN
 from pe.my_rotary import apply_rotary, get_2d_sincos_rotary_embed
 from timm.models.vision_transformer import Attention, Mlp, PatchEmbed
@@ -277,7 +277,7 @@ class Block(nn.Module):
 
         self.no_ffn = no_ffn
         self.mixer = mixer_cls(dim)
-        assert isinstance(self.mixer, (ArceeMamba, Mamba)), f"Invalid, model only supports ArceeMamba and Mamba modules"
+        assert isinstance(self.mixer, (ArceeMamba, Mamba, ArceeVisionMamba)), f"Invalid, model only supports ArceeMamba and Mamba modules"
 
         self.norm = norm_cls(dim)
 
@@ -299,6 +299,7 @@ class Block(nn.Module):
             x: Tensor,
             residual: Optional[Tensor] = None,
             initial_state: Optional[Tensor] = None, # Will be None for zigma baseline
+            initial_state_b: Optional[Tensor] = None,
             return_last_state: Optional[bool] = False, # False for zigma baseline
             y : Optional[Tensor] = None,
     ):
@@ -340,12 +341,15 @@ class Block(nn.Module):
         # branch if its an arcee mixer or not
 
         last_state = None
+        last_state_b = None
         if self.no_ffn:
             scale_ssm, gate_ssm, shift_ssm = self.adaLN_modulation(y).chunk(3, dim=-1) # (B, 3C) -> 3x (B,C)
             
             x_modulated = modulate(x, shift_ssm, scale_ssm)
             if isinstance(self.mixer, ArceeMamba):
                 out_z, last_state = self.mixer (x_modulated, initial_state=initial_state, return_last_state=return_last_state)
+            elif isinstance(self.mixer, ArceeVisionMamba):
+                out_z, last_state, last_state_b = self.mixer(x_modulated, initial_state=initial_state, initial_state_b=initial_state_b, return_last_state=return_last_state)
             else:
                 out_z = self.mixer(x_modulated)
             x = x + gate_ssm.unsqueeze(1) * out_z
@@ -366,7 +370,7 @@ class Block(nn.Module):
                 modulate(self.norm_2(x), shift_mlp, scale_mlp)
             )
         
-        return x, residual, last_state
+        return x, residual, last_state, last_state_b
         
 
 
@@ -462,8 +466,8 @@ def create_block(
     """
     Creates a block with specified mixer every even layer, and MoE ffn every odd layer
     """
-    assert ssm_cfg in ["Arcee", "Zigma", "vision_mamba", "NotArcee"]
-    assert scan_type in ["v2", "arcee_1", "zigma_1", "arcee_2", "zigma_2", "arcee_4", "zigma_4", "arcee_8", "zigma_8"]
+    assert ssm_cfg in ["Arcee", "Zigma", "vision_mamba", "arcee_vision_mamba"]
+    assert scan_type in ["v2", "v2rc", "arcee_1", "zigma_1", "arcee_2", "zigma_2", "arcee_4", "zigma_4", "arcee_8", "zigma_8"], f"Invalid scan type: {scan_type}"
     factory_kwargs = {"device": device, "dtype": dtype}
     norm_cls = partial (nn.LayerNorm if not rms_norm else RMSNorm, eps=norm_eps, **factory_kwargs)
     
@@ -478,9 +482,11 @@ def create_block(
                 **block_kwargs,
                 **factory_kwargs,
             )
-        else:
-            assert ssm_cfg in ["Zigma", "vision_mamba"]
+        elif ssm_cfg == "Zigma" or ssm_cfg == "vision_mamba":
             mixer_cls = partial (Mamba, d_state=ssm_dstate, layer_idx=layer_idx, scan_type=scan_type, **block_kwargs, **factory_kwargs) # block_kwargs contain scan_type
+        else:
+            assert ssm_cfg == "arcee_vision_mamba"
+            mixer_cls = partial (ArceeVisionMamba, d_state=ssm_dstate, layer_idx=layer_idx, scan_type=scan_type, **block_kwargs, **factory_kwargs) 
 
         assert block_type == "normal"
         block = Block(
@@ -564,6 +570,8 @@ class Arcee(nn.Module, PyTorchModelHubMixin):
         self.residual_in_fp32 = residual_in_fp32
         self.add_before = False
         self.use_attn_every_k_layers = use_attn_every_k_layers
+
+        assert ssm_cfg in ["Arcee", "Zigma", "vision_mamba", "arcee_vision_mamba"], f"invalid ssm cfg {ssm_cfg}"
         self.ssm_cfg = ssm_cfg
 
         self.use_independent_attn = use_independent_attn
@@ -629,13 +637,9 @@ class Arcee(nn.Module, PyTorchModelHubMixin):
                 self.lock_permutations = True
                 self.register_buffer("locked_permutation_path", block_kwargs["zigzag_paths"])
                 self.register_buffer("locked_permutation_path_r", block_kwargs["zigzag_paths_reverse"])
-                # TODO: remove redundant asserts
-                assert self.locked_permutation_path.shape[0] == 1
-                assert self.locked_permutation_path.shape[1] == int (grid_size * grid_size)
-                assert self.locked_permutation_path_r.shape[0] == 1
-                assert self.locked_permutation_path_r.shape[1] == int (grid_size * grid_size)
+                
         else:
-            assert self.scan_type == "v2"
+            assert self.scan_type == "v2" or self.scan_type == "v2rc"
             block_kwargs = {}
 
         if block_kwargs:
@@ -643,7 +647,7 @@ class Arcee(nn.Module, PyTorchModelHubMixin):
             print (f"Reverse permutation count : {block_kwargs['zigzag_paths_reverse'].shape[0]}")
         print(f"\n\tRegistered scan_type {scan_type}")
         if block_kwargs == {}:
-            print(f"\t No permutation buffers registered.")
+            print(f"No permutation buffers registered.\nDefault row major sweep.")
         print (f"\tPermutations locked:{self.lock_permutations}")
         
         
@@ -751,7 +755,7 @@ class Arcee(nn.Module, PyTorchModelHubMixin):
             )
         )
     
-    def forward(self, x, t, y=None, initial_state=None):
+    def forward(self, x, t, y=None, initial_state=None, initial_state_b=None):
         """
         Forward pass of the ARCEE backbone
 
@@ -800,21 +804,25 @@ class Arcee(nn.Module, PyTorchModelHubMixin):
         # NOTE: vision mamba processes signal in row major permutation
         
         residual = None
-        assert initial_state is None
+        assert initial_state is None and initial_state_b is None, f"Both fwd scan and bwd scan h0s should be None at start but its {initial_state} and {initial_state_b}"
         for idx, block in enumerate(self.blocks):
-            x, residual, last_state = block (x, residual, initial_state=initial_state, return_last_state=True if self.ssm_cfg == "Arcee" else False, y=c)
+            x, residual, last_state, last_state_b = block (x, residual, initial_state=initial_state, initial_state_b=initial_state_b, return_last_state=True if (self.ssm_cfg == "Arcee" or self.ssm_cfg == "arcee_vision_mamba") else False, y=c)
 
             if self.ssm_cfg == "Arcee":
                 assert last_state is not None
+            elif self.ssm_cfg == "arcee_vision_mamba":
+                assert last_state is not None and last_state is not None
             else:
                 assert last_state is None
                     
             if initial_state is None:
                 initial_state = last_state
+                initial_state_b = last_state_b
             else:
                 #initial_state = initial_state + beta * (last_state - initial_state)
                 #initial_state = initial_state + last_state
                 initial_state = last_state
+                initial_state_b = last_state_b
                     
 
 
@@ -857,14 +865,14 @@ class Arcee(nn.Module, PyTorchModelHubMixin):
         x = self.unpatchify(x) # (B, out_channels, H, W)
         return x
     
-    def forward_with_cfg(self, x, t, y=None, initial_state=None, cfg_scale=1.0, **kwargs):
+    def forward_with_cfg(self, x, t, y=None, initial_state=None, initial_state_b=None, cfg_scale=1.0, **kwargs):
         """
             forward pass of ARCEE, batches the unconditional forward pass for classifier-free guidance.
         """
 
         half = x[:len(x) // 2] 
         combined = torch.cat((half, half), dim=0) # (2B, C, H, W)
-        model_out = self.forward(combined, t, y, initial_state=initial_state) # (2B, C, H, W)
+        model_out = self.forward(combined, t, y, initial_state=initial_state, initial_state_b=initial_state_b) # (2B, C, H, W)
         # For exact reproducibility reasons, we apply classifier-free guidance on only
         # three channels by default. The standard approach to cfg applies it to all channels.
         # this can be done by uncommenting the following line and commenting-out the line following that.
@@ -1033,6 +1041,17 @@ def Vim_B_2(**kwargs):
         **kwargs,
     )
 
+def ArceeVim_B_2(**kwargs):
+    return Arcee(
+        depth=20,
+        hidden_size=768,
+        patch_size=2,
+        initializer_cfg=None,
+        ssm_cfg="arcee_vision_mamba",
+        **kwargs,
+    )
+
+
 def Arcee_B_2(**kwargs):
     return Arcee (
         depth = 24,
@@ -1182,4 +1201,5 @@ Models = {
 
     # Vision Mamba models
     "Vim-B/2" : Vim_B_2,
+    "ArceeVim-B/2" : ArceeVim_B_2,
 }

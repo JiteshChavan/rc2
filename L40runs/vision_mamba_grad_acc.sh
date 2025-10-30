@@ -1,11 +1,14 @@
 export WANDB_API_KEY='2f92f218fe46708930c460c6f57055ac6ce1361c'
 # REMEMBER TO EXPORT RUNID FROM wandb url to resume
-#export WANDB_RUN_ID="PASTE_ID_HERE"
+#export WANDB_RUN_ID="5sqxmibu"
 #export WANDB_RESUME="must"
 EXP="VisionMamba-B2-celeba256"
 MODEL="Vim-B/2"
 SCAN_TYPE="V2"
 WANDB="online"
+
+export WANDB_RUN_ID="5sqxmibu"
+export WANDB_RESUME="must"
 
 
 
@@ -13,7 +16,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 NUM_GPUS=4
 BATCH_SIZE=24
 GRAD_ACC_STEPS=2
-EVAL_BS=32
+EVAL_BS=24
 
 
 GLOBAL_BATCH_SIZE=$((BATCH_SIZE * NUM_GPUS))
@@ -41,8 +44,8 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS ../Arcee/train_grad_acc.py --ex
   --fused-add-norm \
   --drop-path 0.0 \
   --save-content-every 5000 \
-  --eval-every 10000 \
-  --use-wandb $WANDB
-  #--resume
+  --eval-every 1000000000 \
+  --use-wandb $WANDB\
+  --resume
 
   
