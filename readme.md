@@ -2,8 +2,10 @@
 ### Vision Mamba Baseline runs on L40:
 - git pull origin debug
 - cd L40runs
-- [] resume yesterday's experiment as bash vision_mamba_grad_acc.sh
-- [] start the new run as bash arcee_vision_mamba_grad_acc.sh
+
+
+- [ ] resume yesterday's experiment as bash vision_mamba_grad_acc.sh
+- [ ] start the new run as bash arcee_vision_mamba_grad_acc.sh
 
 
 ### Running Eval
