@@ -3,7 +3,9 @@
 - git pull origin debug
 - cd L40Eval
 - pip install clean-fid
-- run eval for old run on same filesystem/machine as : bash vision_mamba_baseline.sh
+- calc fid from already generated 50k images for the first run (vision mamba) as : bash calc_vision_mamba.sh
+- start queue the inference of the other model (arcee_vision_mamba) as : bash arcee_vision_mamba.sh
+- it may crash after generating 50k images, run its calc after as : bash calc_rc_vision_mamba.sh
 
 
 
