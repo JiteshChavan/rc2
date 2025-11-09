@@ -6,8 +6,8 @@ SCAN_TYPE="V2RC"
 
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 NUM_GPUS=4
-EVAL_BS=24 # per GPU
-FID_BS=256 # for inceptionV3 feature extraction model forward pass, can be much higher than backbone
+EVAL_BS=8 # per GPU
+FID_BS=128 # for inceptionV3 feature extraction model forward pass, can be much higher than backbone
 EVAL_SAMPLES=50000
 
 
