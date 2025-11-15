@@ -123,7 +123,7 @@ def check_if_cuda_home_none(global_option: str) -> None:
 
 
 def append_nvcc_threads(nvcc_extra_args):
-    return nvcc_extra_args # + ["--threads", "4"]
+    return nvcc_extra_args + ["--threads", "4"]
 
 
 cmdclass = {}
@@ -172,36 +172,38 @@ if not SKIP_CUDA_BUILD:
                     "Note: make sure nvcc has a supported version by running nvcc -V."
                 )
 
+        if bare_metal_version <= Version("12.9"):
+            cc_flag.append("-gencode")
+            cc_flag.append("arch=compute_53,code=sm_53")
+            cc_flag.append("-gencode")
+            cc_flag.append("arch=compute_62,code=sm_62")
+            cc_flag.append("-gencode")
+            cc_flag.append("arch=compute_70,code=sm_70")
+            cc_flag.append("-gencode")
+            cc_flag.append("arch=compute_72,code=sm_72")
         cc_flag.append("-gencode")
         cc_flag.append("arch=compute_89,code=sm_89")
         cc_flag.append("-gencode")
+        cc_flag.append("arch=compute_75,code=sm_75")
+        cc_flag.append("-gencode")
         cc_flag.append("arch=compute_80,code=sm_80")
+        cc_flag.append("-gencode")
+        cc_flag.append("arch=compute_87,code=sm_87")
         if bare_metal_version >= Version("11.8"):
             cc_flag.append("-gencode")
             cc_flag.append("arch=compute_90,code=sm_90")
-        #cc_flag.append("-gencode")
-        #cc_flag.append("arch=compute_70,code=sm_70")
-        #cc_flag.append("-gencode")
-        #cc_flag.append("arch=compute_80,code=sm_80")
-
-
-        #cc_flag.append("-gencode")
-        #cc_flag.append("arch=compute_53,code=sm_53")
-        #cc_flag.append("-gencode")
-        #cc_flag.append("arch=compute_62,code=sm_62")
-        #cc_flag.append("-gencode")
-        #cc_flag.append("arch=compute_70,code=sm_70")
-        #cc_flag.append("-gencode")
-        #cc_flag.append("arch=compute_72,code=sm_72")
-        #cc_flag.append("-gencode")
-        #cc_flag.append("arch=compute_87,code=sm_87")
-#
-        #if bare_metal_version >= Version("11.8"):
-        #    cc_flag.append("-gencode")
-        #    cc_flag.append("arch=compute_90,code=sm_90")
-        #if bare_metal_version >= Version("12.8"):
-        #    cc_flag.append("-gencode")
-        #    cc_flag.append("arch=compute_100,code=sm_100")
+        if bare_metal_version >= Version("12.8"):
+            cc_flag.append("-gencode")
+            cc_flag.append("arch=compute_100,code=sm_100")
+            cc_flag.append("-gencode")
+            cc_flag.append("arch=compute_120,code=sm_120")
+        if bare_metal_version >= Version("13.0"):
+            cc_flag.append("-gencode")
+            cc_flag.append("arch=compute_103,code=sm_103")
+            cc_flag.append("-gencode")
+            cc_flag.append("arch=compute_110,code=sm_110")
+            cc_flag.append("-gencode")
+            cc_flag.append("arch=compute_121,code=sm_121")
 
 
     # HACK: The compiler flag -D_GLIBCXX_USE_CXX11_ABI is set to be the same as
@@ -221,7 +223,6 @@ if not SKIP_CUDA_BUILD:
                 "-U__CUDA_NO_HALF_OPERATORS__",
                 "-U__CUDA_NO_HALF_CONVERSIONS__",
                 "-fgpu-flush-denormals-to-zero",
-                #"--maxrregcount=128",
             ]
             + cc_flag,
         }
@@ -243,7 +244,6 @@ if not SKIP_CUDA_BUILD:
                     "--use_fast_math",
                     "--ptxas-options=-v",
                     "-lineinfo",
-                    #"--maxrregcount=128",
                 ]
                 + cc_flag
             ),
@@ -304,7 +304,10 @@ def get_wheel_url():
     python_version = f"cp{sys.version_info.major}{sys.version_info.minor}"
     platform_name = get_platform()
     mamba_ssm_version = get_package_version()
-    torch_version = f"{torch_version_raw.major}.{torch_version_raw.minor}"
+    if os.environ.get("NVIDIA_PRODUCT_NAME", "") == "PyTorch":
+        torch_version = str(os.environ.get("NVIDIA_PYTORCH_VERSION"))
+    else:
+        torch_version = f"{torch_version_raw.major}.{torch_version_raw.minor}"
     cxx11_abi = str(torch._C._GLIBCXX_USE_CXX11_ABI).upper()
 
     # Determine wheel URL based on CUDA version, torch version, python version and OS

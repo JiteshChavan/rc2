@@ -1,23 +1,42 @@
-torchrun --standalone --nproc_per_node=1 ../Arcee/dummytrain.py --exp Zigma8-448-256 --datadir ../data/celeba256/lmdb_new --dataset celeba_256 --eval-refdir ../data/celeba256/real_samples \
+export WANDB_API_KEY='2f92f218fe46708930c460c6f57055ac6ce1361c'
+export CUDA_VISIBLE_DEVICES=0
+
+EXP="eval_dummy"
+
+
+MODEL="Vim-B/2"
+SCAN_TYPE="V2"
+
+NUM_GPUS=1
+BATCH_SIZE=8
+EVAL_BS=4
+WANDB=disabled
+
+GLOBAL_BATCH_SIZE=$((BATCH_SIZE * NUM_GPUS))
+
+torchrun --nnodes=1 --nproc_per_node=$NUM_GPUS ../Arcee/train.py --exp $EXP --datadir ../data/celeba256 --dataset celeba_256 --eval-refdir ../data/celeba256/real_samples \
   --image-size 256 \
   --num-classes 1 \
   --block-type normal \
-  --model Arcee-XS/2 \
-  --scan-type Arcee_1 \
+  --model $MODEL \
+  --scan-type $SCAN_TYPE \
   --ssm-dstate 256 \
-  --train-steps 5000 \
-  --eval-every 40001 \
-  --plot-every 100 \
-  --ckpt-every 10000 \
-  --log-every 3 \
-  --global-batch-size 8 \
-  --sample-bs 8 \
-  --eval-bs 4 \
-  --lr 1e-4 \
+  --train-steps 60000 \
+  --eval-every 5000 \
+  --plot-every 500 \
+  --ckpt-every 10 \
+  --log-every 1 \
+  --global-batch-size $GLOBAL_BATCH_SIZE \
+  --sample-bs $BATCH_SIZE \
+  --eval-bs $EVAL_BS \
+  --lr 3e-4 \
   --learnable-pe \
   --path-type GVP \
-  --eval-nsamples 1 \
+  --eval-nsamples 10000 \
   --rms-norm \
   --fused-add-norm \
   --drop-path 0.0 \
-  --save-content-every 50000
+  --save-content-every 5 \
+  --use-wandb $WANDB\
+  #--resume \
+  # REMEMBER TO EXPORT RUNID FROM wandb url to resume

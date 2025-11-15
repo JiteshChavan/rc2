@@ -1,6 +1,8 @@
-use_ema_for_eval = False
-use_ema_for_samples = False
+use_ema_for_eval = True
+use_ema_for_samples = True
 # utils
+import shutil
+import random
 import gc
 import math
 import sys
@@ -50,7 +52,6 @@ import dnnlib
 from pytorch_fid import metric_main, metric_utils
 
 import wandb
-os.environ['WANDB_API_KEY'] = '2f92f218fe46708930c460c6f57055ac6ce1361c'
 
 @torch.no_grad()
 def update_ema(ema_model, model, decay=0.9999):
@@ -141,13 +142,8 @@ def main(args):
     """
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
 
-    # Setup DDP:
+    
     dist.init_process_group("nccl")
-    # if "SLURM_PROCID" in os.environ:
-    #     rank = int(os.environ["SLURM_PROCID"])
-    #     gpu = rank % torch.cuda.device_count()
-    #     world_size = int(os.environ["WORLD_SIZE"], 1)
-    # else:
     rank = dist.get_rank()
     device = rank % torch.cuda.device_count()
     world_size = dist.get_world_size()
@@ -168,12 +164,17 @@ def main(args):
         os.makedirs(sample_dir, exist_ok=True)
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
-
+        
+        mode = args.use_wandb
         wandb.init(
             project="Arcee",
+            entity="red-blue-violet",
             config=vars(args),
             name=experiment_index,
+            mode=mode,
         )
+        print("W&B run id:", wandb.run.id)
+        print("W&B url:", wandb.run.url)
     else:
         logger = create_logger(None)
 
@@ -184,9 +185,9 @@ def main(args):
     
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
-    model = DDP(model.to(device), device_ids=[rank], find_unused_parameters=False)
-    if rank == 0:
-        wandb.watch(model.module if hasattr(model, "module") else model, log="all")
+    model = DDP(model.to(device), device_ids=[device], output_device=device, find_unused_parameters=False)
+    #if rank == 0:
+    #    wandb.watch(model.module if hasattr(model, "module") else model, log="all")
 
     transport = create_transport(
         args.path_type,
@@ -249,7 +250,7 @@ def main(args):
         del checkpoint
     elif args.resume and os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
         checkpoint_file = os.path.join(checkpoint_dir, "content.pth")
-        checkpoint = torch.load(checkpoint_file, map_location=torch.device(f"cuda:{device}"))
+        checkpoint = torch.load(checkpoint_file, map_location=torch.device(f"cuda:{device}"), weights_only=False)
         init_epoch = checkpoint["epoch"]
         init_step = checkpoint["step"] + 1
         model.module.load_state_dict(checkpoint["model"])
@@ -258,9 +259,8 @@ def main(args):
 
         for g in opt.param_groups:
             g["lr"] = args.lr
-
+        
         logger.info("=> resume checkpoint (epoch {})".format(checkpoint["epoch"]))
-        del checkpoint
     else:
         init_epoch = 0
         init_step = 0
@@ -280,6 +280,32 @@ def main(args):
         pin_memory=True,
         drop_last=True,
     )
+    micro_idx_in_epoch = 0
+    # Restore dataloader state
+    restored_epoch = None
+    if args.resume and os.path.exists(os.path.join(checkpoint_dir, "content.pth")):
+        if "data_loader_state" in checkpoint:
+            di = checkpoint["data_loader_state"]
+            epoch = int(di.get("epoch", init_epoch))
+            restored_epoch = epoch
+            sampler.set_epoch(epoch)
+            data_iter = iter(loader)
+            # clip just in case shapes changed
+            micro_idx_in_epoch = min(int(di.get("micro_idx_in_epoch", 0)), len(loader))
+            # fast-forward to the same spot
+            for _ in range(micro_idx_in_epoch):
+                try:
+                    next(data_iter)
+                except StopIteration:
+                    # if saved index == len(loader), roll to next epoch
+                    epoch += 1
+                    sampler.set_epoch(epoch)
+                    data_iter = iter(loader)
+                    micro_idx_in_epoch = 0
+                    break
+        del checkpoint
+    else:
+        data_iter = iter(loader)
 
     logger.info(f"Dataset contains {len(dataset):,} images ({args.datadir})")
 
@@ -327,32 +353,43 @@ def main(args):
     use_latent = True if "latent" in args.dataset else False
     logger.info(f"Training for {args.train_steps} steps...")
 
+    effective_batch_size = args.global_batch_size
+    steps_per_epoch = math.ceil(len(dataset) / effective_batch_size)
+    
 
     total_steps = args.train_steps
     current_step = init_step
-    epoch = init_epoch
-    effective_batch_size = args.global_batch_size
-    steps_per_epoch = math.ceil(len(dataset) / effective_batch_size)
-    sampler.set_epoch(epoch)
-    data_iter = iter(loader)
+    if restored_epoch is None:
+        epoch = init_epoch
+        sampler.set_epoch(epoch)
+        data_iter = iter(loader)
+
+
     def next_batch():
         """Get next batch; if dataloader is exhausted, reshuffle and bump epoch."""
-        nonlocal data_iter, epoch
+        nonlocal data_iter, epoch, micro_idx_in_epoch
         try:
-            return next(data_iter)
+            batch = next(data_iter)
+            micro_idx_in_epoch += 1
+            return batch
         except StopIteration:
             epoch += 1
             sampler.set_epoch(epoch)  # shuffle for the next pass
+            micro_idx_in_epoch = 0
             if pbar is not None and dist.get_rank() == 0:
                 pbar.set_description(f"epoch: {epoch}")
             logger.info(f"Beginning epoch {epoch}...")
             data_iter = iter(loader)
-            return next(data_iter)
+            batch = next(data_iter)
+            micro_idx_in_epoch = 1
+            return batch
     # progress bar on rank 0
     pbar = None
     if dist.get_rank() == 0:
         pbar = tqdm(total=total_steps - init_step, ncols=100, disable=True)
         pbar.set_description(f"epoch: {epoch}")
+
+    
 
     for current_step in range(init_step, total_steps):
         x, y = next_batch()
@@ -445,6 +482,12 @@ def main(args):
                     "model": model.module.state_dict(),
                     "opt": opt.state_dict(),
                     "ema": ema.state_dict(),
+
+                    "data_loader_state": {
+                        "epoch": epoch,
+                        "micro_idx_in_epoch": int(micro_idx_in_epoch),  # how many micro-batches already consumed this epoch
+                    },
+
                 }
                 torch.save(content, os.path.join(checkpoint_dir, "content.pth"))
 
@@ -464,7 +507,7 @@ def main(args):
             # dist.barrier()
 
         if rank == 0 and current_step % args.plot_every == 0:
-            logger.info(f"Generating base model samples...")
+            logger.info(f"Generating ema model samples...")
             model.eval()
             with torch.no_grad():
                 #zs = torch.randn(sample_bs, 4, latent_size, latent_size, device=device)
@@ -479,7 +522,7 @@ def main(args):
                 samples = vae.decode(samples / 0.18215).sample
 
             # Save and display images:
-            save_image(samples, f"{sample_dir}/image_{current_step:07d}.jpg", nrow=4, normalize=True, value_range=(-1, 1))
+            save_image(samples, f"{sample_dir}/image_{current_step:07d}.jpg", nrow=16, normalize=True, value_range=(-1, 1))
             wandb.log({"samples": wandb.Image(f"{sample_dir}/image_{current_step:07d}.jpg")}, step=current_step, commit= not will_log_fid)
             del samples
             model.train()
@@ -496,9 +539,13 @@ def main(args):
                 eval_pbar = tqdm(range(iterations), disable=(rank != 0))
                 total = 0
                 p = Path(experiment_dir) / f"fid{args.eval_nsamples}_epoch{epoch}_step{current_step}"
-                # if p.exists() and rank == 0:
-                #     shutil.rmtree(p.as_posix())
-                p.mkdir(exist_ok=True, parents=True)
+                
+                dist.barrier()
+                if rank == 0:
+                    if p.exists():
+                        shutil.rmtree(p.as_posix())
+                    p.mkdir(exist_ok=True, parents=True)
+                dist.barrier()
                 model.eval()
 
                 use_cfg_eval = use_label and (args.cfg_scale > 1.0)
@@ -506,7 +553,7 @@ def main(args):
                     # Sample inputs:
                     z = torch.randn(n, 4, latent_size, latent_size, device=device)
                     if use_label:
-                        y = torch.randint(args.num_classes-1, size=(n,), dtype=torch.long, device=device) # (, ] sampling
+                        y = torch.randint(args.num_classes-1, size=(n,), dtype=torch.long, device=device) # [, ) sampling
                         if use_cfg_eval:
                             z = torch.cat([z, z], dim=0)
                             y_null = torch.tensor([args.num_classes-1] * n, dtype=torch.long, device=device)
@@ -555,7 +602,7 @@ def main(args):
                         pp = p / f"{index:06d}.jpg"
                         Image.fromarray(sample).save(pp.as_posix())
                     total += global_batch_size
-                del z, y, sample_fn, samples  
+                    del z, y, sample_fn, samples  
                 torch.cuda.empty_cache()
                 gc.collect()
                 model.train()
@@ -603,25 +650,6 @@ def main(args):
 
     model.eval()  # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
-    if rank == 0:
-        logger.info(f"Generating base model samples...")
-        with torch.no_grad():
-            #zs = torch.randn(sample_bs, 4, latent_size, latent_size, device=device)
-            sample_fn = transport_sampler.sample_ode()  # default to ode sampling
-            samples = sample_fn(zs, model_fn, **sample_model_kwargs)[-1]
-            #samples_ema = sample_fn(zs, ema_fn, **sample_model_kwargs)[-1]
-            
-            if use_cfg:  # remove null samples
-                samples, _ = samples.chunk(2, dim=0)
-                #samples_ema, _ = samples_ema.chunk(2, dim=0)
-            #samples = torch.cat((samples,samples_ema), dim=0)
-            samples = vae.decode(samples / 0.18215).sample
-
-        # Save and display images:
-        save_image(samples, f"{sample_dir}/image_FINAL_SAMPLE.jpg", nrow=4, normalize=True, value_range=(-1, 1))
-        wandb.log({"samples": wandb.Image(f"{sample_dir}/image_FINAL_SAMPLE.jpg")}, step=total_steps+500, commit= True)
-        del samples
-        model.train()
     
     logger.info("Done!")
     if pbar is not None:
@@ -648,7 +676,7 @@ if __name__ == "__main__":
         "--scan-type",
         type=str,
         default="none",
-        choices=["none", "Arcee_1", "Arcee_8", "Zigma_1", "Zigma_8"],
+        choices=["none", "Arcee_1", "Arcee_2", "Arcee_4", "Arcee_8", "Zigma_1", "Zigma_2", "Zigma_4", "Zigma_8", "V2", "V2RC"],
     )
     parser.add_argument("--block-type", type=str, default="normal", choices=["normal", "combined"])
 
@@ -688,7 +716,7 @@ if __name__ == "__main__":
     # RESUME TRAINING
     parser.add_argument("--model-ckpt", type=str, default="")
     parser.add_argument("--resume", action="store_true")
-
+    parser.add_argument("--use-wandb", type=str, default="offline", choices=["online", "offline", "disabled"])
         
     
 

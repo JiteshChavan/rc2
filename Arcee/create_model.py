@@ -1,6 +1,6 @@
 from Arcee_Models import Models
 def create_model(config):
-    assert "Arcee" in config.model or "Zigma" in config.model
+    assert "Arcee" in config.model or "Zigma" in config.model or "Vim" in config.model
     return Models[config.model](
         ssm_dstate = config.ssm_dstate,
         img_resolution = config.image_size // 8, # VAE latent space

@@ -1,0 +1,13 @@
+data_prep/*/real_samples/*
+data_prep/*/train.lmdb/
+**/__pycache__/**
+**/wandb/
+scripts/results/
+**/*.so
+
+data_prep/ffhq1024/
+data_prep/celeba256/
+eval_scripts/eval_results/
+fid50k/eval_results/
+**/slurm_logs/
+**/run_state/
