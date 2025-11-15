@@ -12,7 +12,7 @@ python ../Arcee/Sample2.py ODE --ckpt results/time_Arcee8/checkpoints/content.pt
     --fused-add-norm \
     --image-size 256 \
     --num-sampling-steps 50\
-    --global-batch-size 1\
+    --global-batch-size 4\
     --path-type GVP \
     --learnable-pe \
     --measure-time \

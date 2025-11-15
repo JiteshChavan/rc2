@@ -1,4 +1,3 @@
-export WANDB_API_KEY='2f92f218fe46708930c460c6f57055ac6ce1361c'
 
 EXP="ArceeVisionMamba-B2-celeba256"
 export CUDA_VISIBLE_DEVICES=0
