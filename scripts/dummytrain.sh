@@ -1,11 +1,11 @@
 export WANDB_API_KEY='2f92f218fe46708930c460c6f57055ac6ce1361c'
 export CUDA_VISIBLE_DEVICES=0
 
-# to start a brand new run 
-# rm -rf run_state/$EXP
-# rm -rf results/"$EXP"/
-# comment out --resume flag
 EXP="eval_dummy"
+
+
+MODEL="Vim-B/2"
+SCAN_TYPE="V2"
 
 NUM_GPUS=1
 BATCH_SIZE=8
@@ -18,8 +18,8 @@ torchrun --nnodes=1 --nproc_per_node=$NUM_GPUS ../Arcee/train.py --exp $EXP --da
   --image-size 256 \
   --num-classes 1 \
   --block-type normal \
-  --model Arcee-XS/2 \
-  --scan-type Arcee_8 \
+  --model $MODEL \
+  --scan-type $SCAN_TYPE \
   --ssm-dstate 256 \
   --train-steps 60000 \
   --eval-every 5000 \

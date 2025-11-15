@@ -1,7 +1,11 @@
+MODEL=Arcee_B/2
+SCAN_TYPE=Arcee_1
+
+
 python ../Arcee/Sample2.py ODE --ckpt results/time_Arcee8/checkpoints/content.pth \
     --inference-dir inferences \
-    --scan-type Arcee_8\
-    --model Arcee-B/2\
+    --scan-type $SCAN_TYPE\
+    --model $MODEL\
     --ssm-dstate 256 \
     --block-type normal \
     --rms-norm \

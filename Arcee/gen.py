@@ -291,7 +291,7 @@ if __name__ == "__main__":
         "--scan-type",
         type=str,
         default="none",
-        choices=["none", "Arcee_1", "Arcee_8", "Zigma_8"],
+        choices=["none", "Arcee_1", "Arcee_8", "Zigma_8", "Zigma_1"],
     )
     parser.add_argument("--block-type", type=str, default="normal", choices=["normal", "combined"])
 
@@ -308,13 +308,16 @@ if __name__ == "__main__":
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")
     parser.add_argument("--num-in-channels", type=int, default=4)
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=110597)
     parser.add_argument("--ada-cfg", action="store_true", help="Use adaptive cfg as MDT")
     parser.add_argument("--cfg-scale", type=float, default=1.0)
     parser.add_argument("--num-classes", type=int, default=1)
     
     parser.add_argument("--measure-time", action="store_true")
     parser.add_argument("--compute-nfe", action="store_true")
+
+    parser.add_argument("--grid-rows", type=int)
+    parser.add_argument("--grid-cols", type=int)
     
     
     # Flow Matching
