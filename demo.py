@@ -21,6 +21,8 @@ for i in range(depth):
     h0 = last_state
     input = out_z
 
+print (out_z.shape, last_state.shape)
+
 # Dummy loss to verify gradients flow through all parameters
 loss = out_z.mean() + last_state.mean()
 loss.backward()
@@ -34,5 +36,4 @@ for name, param in blocks.named_parameters():
 
 if not unused:
     print("All parameters participated in the backward pass!")
-
 

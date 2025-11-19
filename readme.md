@@ -16,6 +16,66 @@ In our paper, plugging Arcee into a single-scan Zigzag Mamba Flow Matching model
 *(a)* In a vanilla Mamba block, the selective scan is strictly causal: the state is initialized with $h^{(k)}(0)=0$, the terminal state $h^{(k)}(T)$ is discarded after producing $y$, and the next block again starts from zero. Darker cells indicate positions that have accumulated more context (later timesteps have seen a larger prefix of the sequence).  
 *(b)* Arcee extends the scan to a two-port block: the terminal SSR $h^{(k)}(T)$ is reused as the initial state $h^{(k+1)}(0)$ of the next block via a differentiable boundary map, creating a recurrent state chain across depth with a valid gradient path and no change to the intra-block dynamics.
 
+## Qualitative Samples (CelebA-HQ 256×256)
+| (a) Zigma-1 baseline | (b) Zigma-1 + Arcee |
+| -------------------- | ------------------- |
+| ![Zigma-1 samples](assets/zigmaqual.png) | ![Zigma-1 + Arcee samples](assets/rc1qual.png) |
+| CelebA-HQ 256×256, Flow Matching, 50 NFEs, 50k-step checkpoint. | Same setup (CelebA-HQ 256×256, Flow Matching, 50 NFEs, 50k-step checkpoint). Arcee yields sharper, more coherent faces under the **same sampling budget**. |
+
+## Model specs and results (CelebA-HQ 256×256)
+Note that Arcee **does not** incur additional parameter overhead.
+![specs](assets/specs.png)
+![main_results](assets/main_results.png)
+![trainloss](assets/rc1vsz1loss.png)
+
+
+## Environment Setup
+```bash
+# 1) Create and activate env (Python 3.10.8)
+conda create -n arcee-mamba python=3.10.8
+conda activate arcee-mamba
+
+# 2) Install CUDA 12.8 toolkit inside the env
+conda install nvidia/label/cuda-12.8.0::cuda-toolkit
+
+# 3) Install Python requirements
+pip install -r req.txt
+
+# 4) Install PyTorch 2.8 with CUDA 12.8 wheels (make sure cuda-toolkit and torch version match)
+pip3 install torch torchvision
+# or try
+pip3 install "torch==2.8.0" "torchvision==0.19.0" \
+  --index-url https://download.pytorch.org/whl/cu128
+
+# 5) Build local extensions
+cd causal_conv1d
+pip install -e . --no-build-isolation -vvv
+
+cd ../ArceeMamba
+pip install -e . --no-build-isolation -vvv
+
+# 6) From repo root, verify install
+cd ..
+bash run_test.sh   # if this runs, setup is successful
+
+```
+
+### Version compatibility
+
+This repo builds custom CUDA extensions. We recommend using **matching CUDA versions** for:
+
+- the **PyTorch CUDA runtime** (e.g. `cu128` wheels), and  
+- the **system CUDA toolkit** used by `nvcc` (e.g. `cuda-toolkit=12.8.x` via conda).
+
+All commands in this README assume:
+
+- PyTorch `2.8.0` with **cu128** wheels
+- `cuda-toolkit 12.8.x` installed in the environment
+
+If you mix different major/minor CUDA versions (e.g. PyTorch cu128 but toolkit 11.x), the extensions may fail to compile or crash at runtime.
+
+Installing mamba might be problematic, refer [here](https://github.com/state-spaces/mamba/issues) for guidance.
+
 
 ## Citation
 If you find our work valuable, please cite as:
