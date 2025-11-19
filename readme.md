@@ -132,7 +132,7 @@ bash scripts/<RUN_NAME>.sh
 ```
 Several configs are provided in ```scripts```
 
-## Evaluation (FID / KID)
+## Evaluation (FID / KID):
 
 We use [CleanFID](https://github.com/GaParmar/clean-fid) to compute FID/KID on CelebA-HQ 256×256.
 
@@ -152,13 +152,15 @@ for vision mamba experiments, run eval as:
 bash L40Eval/<RUN_NAME>.sh \
 ```
 
+## Inference
 
-To train **Zigma-1 + Arcee** on CelebA-HQ 256×256 with Flow Matching:
+`Arcee/sample_ddp2.py` supports **multi-GPU** inference.
+
+For **single-GPU** inference, you can use the per-run helper script:
 
 ```bash
-# from repo root
-bash scripts/.sh
-
+bash inference/<RUN_NAME>/gen.sh
+```
 
 ## Citation
 If you find our work valuable, please cite as:
@@ -177,14 +179,12 @@ If you find our work valuable, please cite as:
 }
 ```
 
+## Acknowledgements:
+Everyone who inspired either through their presence of absence. 
 
 
 
 
 
 
-### setup ffhq1024 database
-- cd data_prep/ffhq1024
-- bash download.sh
-- python convert.py
-- there should be a folder "real_samples" for fid eval reference and train.lmdb in the directory after the scripts are successful/
+
