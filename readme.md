@@ -1,3 +1,40 @@
+#  Arcee: Differentiable Recurrent State Chain for Generative Vision Modeling with Mamba SSMs (2025)
+
+## Overview
+
+This repository represents official implementation of the paper [Arcee: Differentiable Recurrent State Chain for Generative Vision Modeling with Mamba SSMs](https://arxiv.org/abs/2511.11243)
+
+Arcee is a **drop-in architectural modification** for Mamba-based DNNs for vision (non-sequential signals). Instead of resetting every Mamba block with a zero state, Arcee **reuses the terminal state-space representation** \(h_T^{(k)}\) of block \(k\) as the initial state \(h_0^{(k+1)}\) of block \(k+1\) via a differentiable boundary map. The result is a **cross-block recurrent state chain** that:
+
+- relaxes causality of conventional selective scan manifold introduced in Mamba, across depth, for images and other non-sequential signals,
+- preserves Mamba’s **linear-time selective scan** and implementation,
+- is **parameter-free** and adds **constant, negligible overhead**.
+
+In our paper, plugging Arcee into a single-scan Zigzag Mamba Flow Matching model on **CelebA-HQ 256×256** yields a **lower FID at the same compute budget**, demonstrating that terminal SSR can act as a useful global prior rather than being discarded.
+
+![Arcee Mamba](assets/arcee_selective_scan.png "Arcee Selective Scan")
+*(a)* In a vanilla Mamba block, the selective scan is strictly causal: the state is initialized with $h^{(k)}(0)=0$, the terminal state $h^{(k)}(T)$ is discarded after producing $y$, and the next block again starts from zero. Darker cells indicate positions that have accumulated more context (later timesteps have seen a larger prefix of the sequence).  
+*(b)* Arcee extends the scan to a two-port block: the terminal SSR $h^{(k)}(T)$ is reused as the initial state $h^{(k+1)}(0)$ of the next block via a differentiable boundary map, creating a recurrent state chain across depth with a valid gradient path and no change to the intra-block dynamics.
+
+
+## Citation
+If you find our work valuable, please cite as:
+
+```bibtex
+@article{chavan2025arcee,
+  title         = {Arcee: Differentiable Recurrent State Chain for Generative Vision Modeling with Mamba SSMs},
+  author        = {Jitesh Chavan, Rohit Lal, Anand Kamat, Mengjia Xu},
+  journal       = {arXiv preprint arXiv:2511.11243},
+  year          = {2025},
+  archivePrefix = {arXiv},
+  eprint        = {2511.11243},
+  primaryClass  = {cs.CV},
+  doi           = {10.48550/arXiv.2511.11243},
+  url           = {https://arxiv.org/abs/2511.11243}
+}
+```
+
+
 
 ### Vision Mamba Baseline runs on L40:
 - git pull origin debug
