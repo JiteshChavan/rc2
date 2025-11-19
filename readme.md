@@ -128,7 +128,7 @@ To start Flow Matching training runs on Celeba-HQ 256x256:
 ```bash
 export WANDB_API_KEY="paste_your_key_here"
 # from repo root
-bash scripts/\<RUN_NAME\>.sh
+bash scripts/<RUN_NAME>.sh
 ```
 Several configs are provided in ```scripts```
 
@@ -139,17 +139,17 @@ We use [CleanFID](https://github.com/GaParmar/clean-fid) to compute FID/KID on C
 Assuming:
 
 - `data_prep/celeba256/real_samples/` contains real CelebA-HQ 256×256 validation images, and  
-- `scripts/result/\<RUN_NAME\>/checkpoints` contains checkpoints that are used to generate samples for evaluation against reference
+- `scripts/result/<RUN_NAME>/checkpoints` contains checkpoints that are used to generate samples for evaluation against reference
 
 From repo root, start eval as:
 
 ```bash
-bash fid50k/\<RUN_NAME\>.sh \
+bash fid50k/<RUN_NAME>.sh \
 ```
 or
 for vision mamba experiments, run eval as:
 ```bash
-bash L40Eval/\<RUN_NAME\>.sh \
+bash L40Eval/<RUN_NAME>.sh \
 ```
 
 
