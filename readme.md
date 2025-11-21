@@ -4,7 +4,7 @@
 
 This repository represents official implementation of the paper [Arcee: Differentiable Recurrent State Chain for Generative Vision Modeling with Mamba SSMs](https://arxiv.org/abs/2511.11243)
 
-Arcee is a **drop-in architectural modification** for Mamba-based DNNs for vision (non-sequential signals). Instead of resetting every Mamba block with a zero state, Arcee **reuses the terminal state-space representation** $(h_T^{(k)})$ of block \(k\) as the initial state \(h_0^{(k+1)}\) of block \(k+1\) via a differentiable boundary map. The result is a **cross-block recurrent state chain** that:
+Arcee is a **drop-in architectural modification** for Mamba-based DNNs for vision (non-sequential signals). Instead of resetting every Mamba block with a zero state, Arcee **reuses the terminal state-space representation** $(h_T^{(k)})$ of block $\(k\)$ as the initial state $\(h_0^{(k+1)}\)$ of block $\(k+1\)$ via a differentiable boundary map. The result is a **cross-block recurrent state chain** that:
 
 - relaxes causality of conventional selective scan manifold introduced in Mamba, across depth, for images and other non-sequential signals,
 - preserves Mamba’s **linear-time selective scan** and implementation,
